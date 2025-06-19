@@ -1,0 +1,427 @@
+#Este código clasifica los archivos laz de la segunda y tercera cobertura según
+#los errores que tienen y los guardan en carpetas para preprocesarlos y 
+#corregirlos con LAStools
+
+#También recorta las teselas LiDAR a un radio de 25 m desde el centro de cada 
+#parcela y las normaliza. 
+
+
+#########################################################################
+###################  PROCESADO DE DATOS 3ª COBERTURA #####################
+
+
+library(lidR) 
+
+rutaL3c <- "E:/TFMT/LiDAR3cob/"
+
+
+#Lista con arhivos laz
+lazfiles <- list.files(rutaL3c, pattern = "\\.laz$", full.names = TRUE)
+
+
+########### COMPROBAR LOS ERRORES DE LOS ARCHIVOS LAZ ###################
+
+#Estas líneas hay que comentarlas una vez que se ha hecho la comprobación
+#porque el proceso es largo
+
+#Lista para guardar los resultados de lascheck
+
+laschckresults <- list()
+
+#Bucle para aplicar lascheck a todos los archivos laz
+for (i in lazfiles) {
+  tesela <- readLAS(i) #Abrir los archivos laz
+  #Aplicar las_check y guardar el resultado
+  laschckresults[[basename(i)]] <- las_check(tesela) 
+  message("Verificando archivo: ", basename(i)) #Mostrar el resultado en la consola
+  print(laschckresults[[basename(i)]])
+  }
+
+#En LASTools se unifican los SRC, se ajusta el factor de escala y se reproyectan
+#los archivos en epsg 25831 a epsg 25830 para poder hacer un catálogo con R
+
+rutaL3c <- "E:/TFMT/LiDAR3cob/epsg25830/"
+
+#Capa de puntos con el centro de las parcelas seleccionadas
+
+library(sf)
+library(mapview)
+
+parceMC <- st_read("E:/TFMT/centrosMC/centrosMC.shp")
+
+mapview(parceMC)
+
+#Cambiar el SRC de la capa de puntos al de las teselas LiDAR
+parceMCutm <- st_transform(parceMC, crs = 25830)
+
+
+#Hacer un catálogo con las teselas LiDAR
+ctg <- readLAScatalog(rutaL3c, pattern = "*.laz", full.names = TRUE, 
+                      filter = "-drop_withheld -drop_z_below 0")
+summary(ctg)
+
+
+############## RECORTAR LAS TESELAS 3c AL RADIO DE LAS PARCELAS ##############
+
+#Indicar la ruta donde se va a guardar el recorte de las parcelas
+rutaRec <- "E:/TFMT/LiDAR3cob/recorte3c/"
+
+#Recortar las parcelas que están en el catálogo y guardarlas con el número del
+#estadillo
+for (i in seq_len(nrow(parceMCutm))) {
+  punto <- parceMCutm$geometry[i] #Filtrar por la geometría del punto
+  parcela <- parceMCutm$Estadillo[i] #Extraer el número de parcela
+  #Comprobar si el punto está dentro del catálogo
+  if (any(st_intersects(punto, st_as_sf(ctg), sparse = FALSE))) {
+    #Recortar las teselas con el punto y radio de la parcela
+    recorte <- clip_roi(ctg, geometry = punto, radius = 25,
+                        verbose = FALSE, plot = FALSE)
+  #Dar nombre a los recortes con el número de la parcela
+  nombre <- paste0(rutaRec, "parcela_", parcela, ".laz")
+  writeLAS(recorte, nombre) #Guardar los archivos
+  #Mostrar el progreso
+  cat("Recorte", i, "de", nrow(parceMCutm), "guardado como:",
+      nombre, "\n") 
+  } else {
+    #Indicar los puntos que no están en el catálogo y no se recortan
+    cat("El punto", i, "(Estadillo =", parcela, ") no está dentro del catálogo.\n")
+  }
+}
+
+#Visualizar el resultado del recorte
+parcela <- readLAS("E:/TFMT/LiDAR3cob/recorte3c/parcela_113.laz")
+plot(parcela, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+parcela <- readLAS("E:/TFMT/LiDAR3cob/recorte3c/parcela_113.laz")
+plot(parcela, color = "Z", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
+############ NORMALIZAR LOS RECORTES 3c ################
+
+#Indicar la ruta para guardar los recortes de las parcelas normalizados
+rutaN <- "E:/TFMT/LiDAR3cob/recN3c/"
+
+#Hacer una lista para normalizar las parcelas recortadas
+listaParcelas <- list.files(rutaRec, pattern = "\\.laz$", full.names = TRUE)
+
+
+#Normalizar las parcelas recortadas 
+for (i in listaParcelas) {
+  archivo <- readLAS(i) #Leer cada archivo
+  #Normalizar con el algoritmo knnidw() cada parcela recortada
+  recNorm <- normalize_height(archivo, algorithm = knnidw())
+  #Extraer el nombre del archivo original
+  nomPrev <- basename(i)  #Coge el nombre del archivo sin la ruta
+  nomNorm <- paste0("N", nomPrev)  #Nombrar las parcelas normalizadas
+  guardar <- file.path(rutaN, nomNorm)
+  writeLAS(recNorm, guardar) #Guardar los archivos normalizados
+  cat("Archivo normalizado:", nomPrev, "->", nomNorm, "\n")
+}
+
+
+#Visualizar el resultado de la normalización en la misma parcela que antes
+parceN <- readLAS("E:/TFMT/LiDAR3cob/recN3c/Nparcela_113.laz")
+plot(parceN, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+parceN <- readLAS("E:/TFMT/LiDAR3cob/recN3c/Nparcela_113.laz")
+plot(parceN, color = "Z", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
+#########################################################################
+###################  PROCESADO DE DATOS 2ª COBERTURA #####################
+
+rutaL2c <- "E:/TFMT/LiDAR2cob/"
+
+#Lista con arhivos laz
+lazfiles2 <- list.files(rutaL2c, pattern = "\\.laz$", full.names = TRUE)
+
+#Estas líneas hay que comentarlas una vez que se ha hecho la comprobación
+#porque el proceso es largo
+
+#Lista para guardar los resultados de lascheck
+
+laschckresults2 <- list()
+
+#Bucle para aplicar lascheck a todos los archivos laz
+for (i in lazfiles2) {
+  tesela2 <- readLAS(i) #Abrir los archivos laz
+  #Aplicar las_check y guardar el resultado
+  laschckresults2[[basename(i)]] <- las_check(tesela2)
+  message("Verificando archivo: ", basename(i)) #Mostrar el resultado en la consola
+  print(laschckresults2[[basename(i)]])
+  }
+
+#Algunos archivos tienen el mismo gpstime y return number en todos los puntos
+#Muchos archivos tienen puntos duplicados
+#Hay archivos sin SRC definido. 
+#Hay muchos archivos con el factor de escala distino de 0.001 0.001 0.001
+#Se va a comprobar cuáles para definirlo
+
+############# GUARDAR ARCHIVOS EN DISTINTAS CARPETAS SEGÚN SU ERROR ###########
+
+#df para clasificar los archivos según su error
+library(dplyr)
+srcfiles <- data.frame(Archivo = character(), 
+                       SRC = character(), 
+                       Escala_X = numeric(), 
+                       Escala_Y = numeric(),
+                       Escala_Z = numeric(), 
+                       stringsAsFactors = FALSE)
+
+
+#Bucle para comprobar el SRC y el factor de escala de cada archivo
+for (i in lazfiles2) {
+  archivo <- readLAS(i) #Abrir los archivos laz
+  
+  #Ver si al archivo le faltan datos
+  if (is.empty(archivo)) {
+    src_actual <- "Faltan datos"
+    escala_x <- NA
+    escala_y <- NA
+    escala_z <- NA
+  } else {
+    #Sacar el SRC en character y el factor de escala
+    src_actual <- as.character(crs(archivo))  
+    header_info <- header(archivo)            
+    escala_x <- header_info@PHB$`X scale factor`  
+    escala_y <- header_info@PHB$`Y scale factor`  
+    escala_z <- header_info@PHB$`Z scale factor`  
+  }
+  
+  #Hacer un df con los SRC y los factores de escala
+  srcfiles <- rbind(
+    srcfiles, data.frame(
+      Archivo = basename(i), 
+      SRC = src_actual, 
+      Escala_X = escala_x, 
+      Escala_Y = escala_y, 
+      Escala_Z = escala_z, 
+      stringsAsFactors = FALSE))
+  
+  
+  #Visualizar el proceso
+  cat("Archivo:", basename(i), "\n")
+  cat("SRC:", src_actual, "\n")
+  cat("Escala X:", escala_x, "\n")
+  cat("Escala Y:", escala_y, "\n")
+  cat("Escala Z:", escala_z, "\n")
+  cat("----------------------\n")
+}
+
+#Ver el resultado de los df
+print(srcfiles)
+
+#Guardar los archivos laz en carpetas diferentes según su SRC
+lapply(unique(srcfiles$SRC), function(src_ok) {
+  df_filtrado <- srcfiles %>% filter(SRC == src_ok)
+  
+  subcadena <- substr(src_ok, 17, 31)
+  
+  #Dar nombre a los df
+  nombre_df <- paste0(gsub("[^a-zA-Z0-9]", "_", subcadena))
+  
+  #Mandar los df al environment
+  assign(nombre_df, df_filtrado, envir = .GlobalEnv)
+})
+
+rutaSRC <- "E:/TFMT/LiDAR2cob/carpetasSRC"
+
+for (i in seq_len(nrow(srcfiles))) {
+  #Sacar el nombre del archivo y su SRC
+  nomArchivo <- srcfiles$Archivo[i]
+  src <- srcfiles$SRC[i]
+  
+  #Hacer una carpeta para los archivos de cada SRC
+  carpeta_src <- file.path(rutaSRC, as.character(src))
+  if (!dir.exists(carpeta_src) {
+    dir.create(carpeta_src, recursive = TRUE)
+  })
+  #Guardar el archivo en la carpeta de su SRC
+  ruta_origen <- file.path(rutaL2c, nomArchivo)
+  ruta_destino <- file.path(carpeta_src, nomArchivo)
+  
+  if (file.exists(ruta_origen)) {
+    file.copy(ruta_origen, ruta_destino)
+    cat("Archivo copiado:", nomArchivo, "->", carpeta_src, "\n")
+  } else {
+    cat("Archivo no encontrado:", nomArchivo, "\n")
+  }
+}
+
+#En LASTools se unifican los SRC, se ajusta el factor de escala y se reproyectan
+#los archivos en epsg 25831 a epsg 25830 para poder hacer un catálogo con R
+
+rutaL2c <- "E:/TFMT/LiDAR2cob/epsg25830/"
+
+ctg2 <- readLAScatalog(rutaL2c, pattern = "*.laz", full.names = TRUE, 
+                       filter = "-drop_withheld -drop_z_below 0")
+summary(ctg2)
+
+
+############## RECORTAR LAS TESELAS 2c AL RADIO DE LAS PARCELAS ##############
+
+rutaRec2 <- "E:/TFMT/LiDAR2cob/recortes2c/"
+
+#Recortar las parcelas que están en el catálogo y guardarlas con el número del
+#estadillo
+
+for (i in seq_len(nrow(parceMCutm))) {
+  punto <- parceMCutm$geometry[i] #Filtrar por la geometría del punto
+  parcela <- parceMCutm$Estadillo[i] #Extraer el número de estadillo
+  #Comprobar si el punto está dentro del catálogo
+  if (any(st_intersects(punto, st_as_sf(ctg2), sparse = FALSE))) {
+    #Recortar las teselas con el punto y radio de la parcela
+    recorte <- clip_roi(ctg2, geometry = punto, radius = 25,
+                        verbose = FALSE, plot = FALSE)
+    #Dar nombre a los recortes con el número del estadillo
+    nombre <- paste0(rutaRec2, "parcela_2", parcela, ".laz")
+    writeLAS(recorte, nombre) #Guardar los archivos
+    #Mostrar el progreso
+    cat("Recorte", i, "de", nrow(parceMCutm), "guardado como:",
+        nombre, "\n") 
+  } else {
+    #Indicar los puntos que no están en el catálogo y no se recortan
+    cat("El punto", i, "(Estadillo =", parcela, ") no está dentro del catálogo.\n")
+  }
+}
+
+#Visualizar el resultado del recorte en la misma parcela que la 3cob
+parcela <- readLAS("E:/TFMT/LiDAR2cob/recortes2c/recortes2cparcela_113.laz")
+plot(parcela, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+parcela <- readLAS("E:/TFMT/LiDAR2cob/recortes2c/recortes2cparcela_113.laz")
+plot(parcela, color = "Z", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
+############ NORMALIZAR LOS RECORTES 2c ################
+
+#Ruta para guardar los recortes de las parcelas normalizados
+rutaN2 <- "E:/TFMT/LiDAR2cob/recN2c/"
+
+#Hacer una lista para normalizar las parcelas recortadas
+listaParcelas2 <- list.files(rutaRec2, pattern = "\\.laz$", full.names = TRUE)
+
+
+#Normalizar las parcelas recortadas 
+for (i in listaParcelas2) {
+  archivo <- readLAS(i) #Leer cada archivo
+  #Normalizar con el algoritmo knnidw() cada parcela recortada
+  recNorm <- normalize_height(archivo, algorithm = knnidw())
+  #Extraer el nombre del archivo original
+  nomPrev <- basename(i)  #Coge el nombre del archivo sin la ruta
+  nomNorm <- paste0("N", nomPrev)  #Nombrar las parcelas normalizadas
+  guardar <- file.path(rutaN2, nomNorm)
+  writeLAS(recNorm, guardar) #Guardar los archivos normalizados
+  cat("Archivo normalizado:", nomPrev, "->", nomNorm, "\n")
+}
+
+#Ver el resultado de la normalización en la misma parcela de antes
+parceN <- readLAS("E:/TFMT/LiDAR2cob/recN2c/Nrecortes2cparcela_113.laz")
+plot(parceN, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+parceN <- readLAS("E:/TFMT/LiDAR2cob/recN2c/Nrecortes2cparcela_113.laz")
+plot(parceN, color = "Z", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
+
+#########################################################################
+############## PROCESADO DE LOS DATOS 1ª COBERTURA #######################
+
+rutaL1c <- "E:/TFMT/LiDAR1cob/"
+
+#Lista con arhivos laz
+lazfiles1 <- list.files(rutaL1c, pattern = "\\.laz$", full.names = TRUE)
+
+
+#Una vez que se ha comprobado que los archivos laz no tienen errores se comentan
+#estas líneas de código para no repetir el proceso.
+
+#Lista para guardar los resultados de lascheck
+
+laschckresults1 <- list()
+
+#Bucle para aplicar lascheck a todos los archivos laz
+for (i in lazfiles1) {
+  tesela1 <- readLAS(i) #Abrir los archivos laz
+  #Aplicar las_check y guardar el resultado
+  laschckresults1[[basename(i)]] <- las_check(tesela1)
+  message("Verificando archivo: ", basename(i)) #Mostrar el resultado en la consola
+  print(laschckresults1[[basename(i)]])
+  }
+
+#En LASTools se unifican los SRC, se ajusta el factor de escala y se reproyectan
+#los archivos en epsg 25831 a epsg 25830 para poder hacer un catálogo con R
+
+rutaL1c <- "E:/TFMT/LiDAR1cob/epsg25830/"
+
+ctg1 <- readLAScatalog(rutaL1c, pattern = "*.laz", full.names = TRUE, 
+                       filter = "-drop_withheld -drop_z_below 0")
+summary(ctg1)
+
+
+############## RECORTAR LAS TESELAS 1c AL RADIO DE LAS PARCELAS ##############
+
+#Recortar las parcelas que están en el catálogo y guardarlas con el número del
+#estadillo
+
+rutaRec1 <- "E:/TFMT/LiDAR1cob/recortes1c/"
+
+for (i in seq_len(nrow(parceMCutm))) {
+  punto <- parceMCutm$geometry[i] #Filtrar por la geometría del punto
+  parcela <- parceMCutm$Estadillo[i] #Extraer el número de estadillo
+  #Comprobar si el punto está dentro del catálogo
+  if (any(st_intersects(punto, st_as_sf(ctg1), sparse = FALSE))) {
+    #Recortar las teselas con el punto y radio de la parcela
+    recorte <- clip_roi(ctg1, geometry = punto, radius = 25,
+                        verbose = FALSE, plot = FALSE)
+    #Dar nombre a los recortes con el número de estadillo
+    nombre <- paste0(rutaRec1, "recortes1c", parcela, ".laz")
+    writeLAS(recorte, nombre) #Guardar los archivos
+    #Mostrar el progreso
+    cat("Recorte", i, "de", nrow(parceMCutm), "guardado como:",
+        nombre, "\n") 
+  } else {
+    #Indicar los puntos que no están en el catálogo y no se recortan
+    cat("El punto", i, "(Estadillo =", parcela, ") no está dentro del catálogo.\n")
+  }
+}
+
+#Ver el resultado del recorte en la misma parcela que en 3cob y 2cob
+parcela <- readLAS("E:/TFMT/LiDAR1cob/recortes1c/recortes1c113.laz")
+plot(parcela, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+parcela <- readLAS("E:/TFMT/LiDAR1cob/recortes1c/recortes1c113.laz")
+plot(parcela, color = "Z", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
+############ NORMALIZAR LOS RECORTES 1c ################
+
+#Indicar la ruta para guardar los recortes de las parcelas normalizados
+rutaN1 <- "E:/TFMT/LiDAR1cob/recN1c/"
+
+#Hacer una lista para normalizar las parcelas recortadas
+listaParcelas1 <- list.files(rutaRec1, pattern = "\\.laz$", full.names = TRUE)
+
+
+#Normalizar las parcelas recortadas 
+for (i in listaParcelas1) {
+  archivo <- readLAS(i) #Leer cada archivo
+  #Normalizar con el algoritmo knnidw() cada parcela recortada
+  recNorm <- normalize_height(archivo, algorithm = knnidw())
+  #Extraer el nombre del archivo original
+  nomPrev <- basename(i)  #Coge el nombre del archivo sin la ruta
+  nomNorm <- paste0("N", nomPrev)  #Nombrar las parcelas normalizadas
+  guardar <- file.path(rutaN1, nomNorm)
+  writeLAS(recNorm, guardar) #Guardar los archivos normalizados
+  cat("Archivo normalizado:", nomPrev, "->", nomNorm, "\n")
+}
+
+
+#Ver el resultado de la normalización en la misma parcela que antes
+parceN <- readLAS("E:/TFMT/LiDAR1cob/recN1c/Nrecortes1c113.laz")
+plot(parceN, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+parceN <- readLAS("E:/TFMT/LiDAR1cob/recN1c/Nrecortes1c113.laz")
+plot(parceN, color = "Z", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
