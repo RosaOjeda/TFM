@@ -1,0 +1,359 @@
+
+#Con este código se calculan estadísticos de las parcelas seleccionadas en el IFN4
+
+######### RUTA A LAS TABLAS DE LA BDD #############
+
+#Ruta a tablas en csv
+#Previamente se ha comprobado abriendo el archivo en txt que el separador de las
+#columnas es ; y el decimal es , 
+#Los separadores y decimales son los mismos en todas las tablas.
+
+csvbdd <- "D:/TFMT/IFN4_Teruel/tablas_bdd/"
+
+
+################ RESUMEN DE LOS DATOS POR ÁRBOL EN CADA PARCELA ##############
+
+#Ruta a los datos obtenidos de las parcelas
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+library(openxlsx)
+
+#Leer el csv de PM que están en IFN3 e IFN4 y ver su estructura de datos
+PiesMayores <- read.csv2(paste0(csvInv, "piesIfn3y4.csv"),
+                     stringsAsFactors = FALSE)
+str(PiesMayores)
+
+
+#Filtrar solo las parcelas que se han seleccionado utilizando la capa shp.
+library(sf)
+
+rutaMCgr <- "D:/TFMT/cartoTeru/MCTeru/tMCgr/"
+
+parce <- st_read(paste0(rutaMCgr, "TMCrf.shp"))
+
+library(tidyverse) #dplyr, tidyr, purrr, ggplot2, readr, tibble
+mayores <- PiesMayores %>%
+  filter(Estadillo %in% parce$Estadillo)
+
+#Tras revisar los datos en las instrucciones de campo del IFN4 se van a agrupar
+#los valores de Dn y de Ht por parcela y se van a obtener sus estadísticos:
+
+#Enlace a instrucciones de datos de campo 
+#https://www.miteco.gob.es/content/dam/miteco/es/biodiversidad/temas/
+#inventarios-nacionales/ifn/ifn4/documentador_ifn4_campo_tcm30-536595.pdf
+
+
+#Hacer una columna que sea la media de los dos Dn y calcular la sección normal
+
+#El punto en el paréntesis de select es un placeholder, representa el df que se
+#está pasando por el pipe, es decir, representa al df "mayores"
+mayores <- mayores %>%
+  mutate(Dn = rowMeans(select(., Dn1, Dn2), na.rm = TRUE)) %>%
+  relocate(Dn, .after = Dn2) %>%
+  mutate(Sn_cm2 = (pi * ((Dn / 10)^2) / 4)) %>%
+  relocate(Sn_cm2, .after = Dn)
+
+
+str(mayores)
+
+mayores <- mayores %>%
+  mutate(Hrama = Ht - Hcopa)
+
+
+#Comprobar la distribución de la variable Especie en un histograma
+ggplot(mayores, aes(x = Especie)) +
+  geom_histogram(binwidth = 1) +
+  scale_x_continuous(limits = c(20, 60)) + #La mayoría están en este rango
+  labs(
+    title = "Histograma de Especie",
+    x = "Especie",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#Las especies mayoritarias son:
+#P. sylvestris (21), P. halepensis (24), P. nigra (25) y P. pinaster (26). 
+
+
+#Comprobar la distribución de la variable Forma en un histograma
+ggplot(mayores, aes(x = Forma)) +
+  geom_histogram() +
+  scale_x_continuous() +
+  labs(
+    title = "Histograma de Forma de cubicación",
+    x = "Forma de cubicación",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#La forma de cubicación mayoritaria es la 2: Árboles que cumplan las cuatro 
+#condiciones siguientes: 
+#Ser fusiformes
+#Tener troncos maderables de 4 o más metros
+#Rramificarse por la parte superior
+#No pertenecer a la forma 1 (6 m de fuste y 20 cm de Dn)
+
+#Seleccionar las variables relevantes para obtener un modelo
+listaModelo <- c("Estadillo", "Especie", "Dn", "Sn_cm2", "Ht", "Hrama", "Hcopa")
+
+vbles <- mayores %>%
+  select(all_of(listaModelo))
+
+str(vbles)
+
+#Las parcelas tienen un radio variable en función del diámetro de los árboles
+#Calcular el radio de cada parcela 
+
+vbles <- vbles %>%
+  mutate(radioFxDn = case_when(
+    Dn >= 75 & Dn < 125 ~ 5,    #75 mm ≤ Dn < 125 mm: radio = 5 m
+    Dn >= 125 & Dn < 225 ~ 10,   #125 mm ≤ Dn < 225 mm: radio = 10 m
+    Dn >= 225 & Dn < 425 ~ 15,   #225 mm ≤ Dn < 425 mm: radio = 15 m
+    Dn >= 425 ~ 25               #425 mm ≤ Dn: radio = 25 m
+  ))
+
+head(vbles)
+
+#Calcular la superficie de cada parcela
+vbles <- vbles %>%
+  group_by(Estadillo) %>%               #Agrupar por Estadillo
+  mutate(radio = max(radioFxDn, na.rm = TRUE)) %>%  #Máximo de 'radioFxDn' por estadillo
+  ungroup() %>%   #Desagrupar para que luego no haya problemas
+  select(-radioFxDn) %>%
+  mutate(Sparce_m2 = pi * radio^2) %>%
+  as.data.frame()
+
+head(vbles)
+
+
+########### CALCULAR ÁREA BASIMÉTRICA, Nº PIES Y DENSIDAD ##########
+
+#Agrupar datos de pies mayores por estadillo y calcular el área basimétrica G
+#de la parcela, el número de ejemplares N en cada parcela y la densisdad de pies
+#dpies
+
+#Hacer tabla nueva con datos resumen por estadillo con el nº de pies por parcela
+nueva <- vbles %>%
+  group_by(Estadillo) %>%
+  summarise(Npies = n()) %>%
+  ungroup()
+
+#Se van a hacer tres columnas representando las especies más abundantes en la
+#parcela, en caso de que no haya tantas se repite el valor de la mayoritaria
+
+vblesParce <- vbles %>%
+  group_by(Estadillo, Especie) %>% #Agrupar por estadillo y especie
+  summarise(fr_sp = n(), .groups = 'drop') %>% #Obtener la frecuencia de cada 
+  #especie por estadillo y deshacer la agrupación anterior
+  arrange(Estadillo, desc(fr_sp)) %>% #Agrupar por estadillo pero ordenando
+  #por frecuencia decreciente de ejemplares de cada especie
+  group_by(Estadillo) %>% #Agrupar de nuevo por estadillo porque ya hay una 
+  #columna con la frecuencia de cada especie 
+  mutate(rank = paste0("sp", row_number())) %>% #Crear una columna con el orden
+  #de cada especie en cada estadillo
+  filter(rank %in% c("sp1", "sp2", "sp3")) %>% #Filtrar las tres sp mayoritarias
+  pivot_wider( #Pone a lo ancho los valores de la columna con el orden que ocupa
+    #cada especie en el estadillo.
+    id_cols = Estadillo, #Mantener Estadillo como referencia para las columnas
+    names_from = rank, #Tomar los valores de las filas como nombres de las columnas
+    values_from = Especie, #Completar las nuevas columnas con los valores de sp
+    names_glue = "{rank}" #Mantiene el nombre de las columnas
+  ) %>%
+  mutate( #Mantener el valor de la especie mayoritaria si no hay otras
+    sp2 = ifelse(is.na(sp2), sp1, sp2),
+    sp3 = ifelse(is.na(sp3), sp2, sp3)
+  )
+
+vblesParce  <- vblesParce %>%
+  left_join(nueva, by = "Estadillo") %>%
+  relocate(Npies, .after = Estadillo)
+
+
+#Obtener los valores medios de PM para obtener vbles de parcela
+medias <- vbles %>%
+  group_by(Estadillo) %>% 
+  summarise(
+    media_Dn = mean(Dn, na.rm = TRUE),
+    media_Sn_cm2 = mean(Sn_cm2, na.rm = TRUE),
+    media_Ht = mean(Ht, na.rm = TRUE),
+    media_Hrama = mean(Hrama, na.rm = TRUE),
+    media_Hcopa = mean(Hcopa, na.rm = TRUE),
+    Sparce_m2 = mean(Sparce_m2, na.rm = TRUE)
+  )
+
+vblesParce <- vblesParce %>%
+  left_join(medias, by = "Estadillo")
+
+
+#Calcular el área basimétrica G en cada parcela, por las unidades dará en m2/ha
+
+vblesParce <- vblesParce %>%
+  mutate(dpies = Npies / Sparce_m2,
+         G_m2ha = media_Sn_cm2 / Sparce_m2)
+
+#Guardar la tabla resultante con variables dasométricas
+write_excel_csv2(vblesParce, paste0(csvInv, "vblesParce.csv"))
+
+
+
+#Hacer una tabla con los estadísticos por parcela
+
+stParce <- vblesParce %>%
+  select(-c("sp1", "sp2", "sp3", "media_Sn_cm2"))
+
+
+#Obtener los estadísticos de Dn y Ht que faltan
+st <- vbles %>%
+  group_by(Estadillo) %>% 
+  summarise(
+    #min_Dn = min(Dn, na.rm = TRUE),
+    min_Ht = min(Ht, na.rm = TRUE),
+    min_Hr = if (all(is.na(Hrama))) NA else min(Hrama, na.rm = TRUE),
+    min_Hc = if (all(is.na(Hcopa))) NA else min(Hcopa, na.rm = TRUE),
+    #max_Dn = max(Dn, na.rm = TRUE),
+    max_Ht = max(Ht, na.rm = TRUE),
+    max_Hr = if (all(is.na(Hrama))) NA else max(Hrama, na.rm = TRUE),
+    max_Hc = if (all(is.na(Hcopa))) NA else max(Hcopa, na.rm = TRUE),
+    #mediana_Dn = median(Dn, na.rm = TRUE),
+    mediana_Ht = median(Ht, na.rm = TRUE),
+    mediana_Hr = if (all(is.na(Hrama))) NA else median(Hrama, na.rm = TRUE),
+    mediana_Hc = if (all(is.na(Hcopa))) NA else median(Hcopa, na.rm = TRUE),
+    moda_Ht = {
+      tab <- table(Ht)
+      as.numeric(names(tab)[which.max(tab)])
+    },
+    moda_Hr = if (all(is.na(Hrama))) {
+      NA
+    } else {
+      tab <- table(Hrama)
+      as.numeric(names(tab)[which.max(tab)])
+    },
+    moda_Hc = if (all(is.na(Hcopa))) {
+      NA
+    } else {
+      tab <- table(Hcopa)
+      as.numeric(names(tab)[which.max(tab)])
+    }
+    
+    # var_Dn = var(Dn, na.rm = TRUE),
+    # var_Ht = var(Ht, na.rm = TRUE),
+    # sd_Dn = sd(Dn, na.rm = TRUE),
+    # sd_Ht = sd(Ht, na.rm = TRUE)
+  )
+
+stParce  <- stParce %>%
+  left_join(st, by = "Estadillo")
+
+#Añadir la Fcc del arbolado de las parcelas, el MC y los trataminetos selvícolas
+
+Parcelas <- read.csv2(paste0(csvbdd, "tPCParcelas.csv"),
+                      stringsAsFactors = FALSE)
+
+str(Parcelas)
+
+listaParcelas <- c("Estadillo", "FccTot", "FccArb", "ModComb", "EspCMue", "CortaReg",
+                   "MejVue1")
+
+Parcelas <- Parcelas %>%
+  select(all_of(listaParcelas))
+
+stParce <- stParce %>%
+  left_join(Parcelas, by = "Estadillo") %>%
+  relocate(FccArb, .after = Npies) %>%
+  relocate(ModComb, .after = G_m2ha)
+
+
+
+ggplot(stParce, aes(x = media_Hrama)) +
+  geom_histogram() +
+  scale_x_continuous() +
+  labs(
+    title = "Histograma de altura 1ª rama",
+    x = "Altura (m)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+ggplot(stParce, aes(x = media_Hcopa)) +
+  geom_histogram() +
+  scale_x_continuous() +
+  labs(
+    title = "Histograma de espesor copa",
+    x = "Espesor (m)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+
+
+
+#Añadir los pies menores
+
+rege <- read.csv2(paste0(csvbdd, "tPCRegenera.csv"),
+                  stringsAsFactors = FALSE)
+
+
+#Filtrar los datos de las parcelas seleccionadas
+PiesMenores <- rege%>% 
+  filter(Estadillo %in% parce$Estadillo)
+
+#Guardar los datos de regenerado de las parcelas seleccionadas
+write_excel_csv2(PiesMenores, paste0(csvInv, "PiesMenores.csv"))
+
+
+
+#Ver la cantidad y características del regenerado
+ggplot(PiesMenores, aes(x = CatDes)) +
+  geom_histogram() +
+  scale_x_continuous() +
+  labs(
+    title = "Histograma de Regenerado",
+    x = "Regenerado",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#El valor 4 son los pies mayores, se indica número y altura media en dm.
+#El valor 3 son pies con H > 1,3 m y Dn < 2,5 cm
+#El valor 2 son pies con 0,3 m < H < 1,3 m
+#El valor 1 son pies con H < 0,3 m
+
+#Calcular la altura media del regenerado teniendo en cuenta el número de cada
+#clase
+menores <- PiesMenores %>%
+  group_by(Estadillo) %>%  #Agrupar por Estadillo
+  summarise(
+    Pmenores = sum(NumPies, na.rm = TRUE), 
+    Hm_pond = (weighted.mean(Hm, w = NumPies, na.rm = TRUE)) / 10  # Media ponderada de Hm
+  ) %>%
+  ungroup() 
+
+stParce <- stParce %>%
+  left_join(menores, by = "Estadillo")
+
+#Visualizar la altura media del regenerado ponderada 
+ggplot(stParce, aes(x = Hm_pond)) +
+  geom_histogram() +
+  scale_x_continuous() +
+  labs(
+    title = "Histograma de altura media regenerado",
+    x = "Altura media (m)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+
+write_excel_csv2(stParce, paste0(csvInv, "stParceOK.csv"))
+
+
+
+#Guardar una tabla resumen con las variables que se ha visto después que son
+#más útiles
+columnas <- names(stParce)[c(1:11, 28, 29)]
+
+stParce_red <- stParce %>%
+  select(all_of(columnas))
+
+write_excel_csv2(stParce_red, paste0(csvInv, "stParce_red.csv"))
+
+
