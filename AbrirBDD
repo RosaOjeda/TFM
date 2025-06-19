@@ -1,0 +1,81 @@
+library(odbc)
+library(DBI)
+library(readr)
+
+
+#Una vez descargados los archivos del IFN habría que hacer esto para 
+#seleccionar los datos que se van a utilizar
+
+######## ABRIR LA BASE DE DATOS #############
+
+#Ruta a la base de datos de campo 
+rutabdd1 <- "D:/TFMT/IFN4_Teruel/Ifn4_Teruel.mdb"
+
+
+#Conectar con la bdd
+conex1 <- dbConnect(
+  odbc::odbc(), .connection_string = paste0(
+    "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=", rutabdd1, ";"))
+
+#Listar las tablas de la bdd
+tablas1 <- dbListTables(conex1) 
+print(tablas1)
+
+#Abrir tabla con coord de parcelas y nº de estadillo
+PCDatosMap <- dbReadTable(conex1, "PCDatosMap")  
+print(head(PCDatosMap))
+
+#Abrir tabla con características de parcelas y nº de estadillo
+PCParcelas <- dbReadTable(conex1, "PCParcelas")  
+print(head(PCParcelas))
+
+#Abrir tabla con los pies mayores y nº de estadillo
+PCMayores <- dbReadTable(conex1, "PCMayores")  
+print(head(PCMayores))
+
+#Abrir tabla con los datos de matorral y nº de estadillo
+PCMatorral <- dbReadTable(conex1, "PCMatorral")  
+print(head(PCMatorral))
+
+#Abrir tabla con coord de parcelas y nº de estadillo
+PCRegenera<- dbReadTable(conex1, "PCRegenera")  
+print(head(PCRegenera))
+
+#Cerrar la conexión
+dbDisconnect(conex1)
+
+#Ruta a la base de datos SIG
+rutabdd2 <- "D:/TFMT/IFN4_Teruel/Sig_44_Teruel.mdb"
+
+#Conectar con la bdd
+conex2 <- dbConnect(
+  odbc::odbc(), .connection_string = paste0(
+    "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=", rutabdd2, ";"))
+
+#Listar las tablas de la bdd
+tablas2 <- dbListTables(conex2) 
+print(tablas2)
+
+#Abrir tabla que relaciona parcela, tesela y estrato
+Parcpoly <- dbReadTable(conex2, "Parcpoly")  
+print(head(Parcpoly))
+
+#Abrir tabla con características de tesela (MFN) y parcela (IFN)
+Poligon <- dbReadTable(conex2, "Poligon")  
+print(head(Poligon))
+
+#Cerrar la conexión
+dbDisconnect(conex2)
+
+
+######### EXTRAER TABLAS DE LA BDD Y GUARDARLAS #############
+
+#Guardar las tablas de la bdd en csv compatible con excel
+csvbdd <- "D:/TFMT/IFN4_Teruel/tablas_bdd/"
+write_excel_csv2(PCDatosMap, paste0(csvbdd, "tPCDatosMap.csv"))
+write_excel_csv2(PCParcelas, paste0(csvbdd, "tPCParcelas.csv"))
+write_excel_csv2(PCMayores, paste0(csvbdd, "tPCMayores.csv"))
+write_excel_csv2(PCMatorral, paste0(csvbdd, "tPCMatorral.csv"))
+write_excel_csv2(PCRegenera, paste0(csvbdd, "tPCRegenera.csv"))
+write_excel_csv2(Parcpoly, paste0(csvbdd, "tParcpoly.csv"))
+write_excel_csv2(Poligon, paste0(csvbdd, "tPoligon.csv"))
