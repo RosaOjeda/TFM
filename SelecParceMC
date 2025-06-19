@@ -1,0 +1,463 @@
+
+#Este código selecciona las parcelas para descargar los datos LiDAR del IGN.
+
+
+
+######### RUTA A LAS TABLAS DE LA BDD #############
+
+#Ruta a tablas en csv
+
+csvbdd <- "D:/TFMT/IFN4_Teruel/tablas_bdd/"
+
+
+
+############## SELECCIONAR LAS PARCELAS DE INVENTARIO POR MC ##############
+
+#Leer el csv de coord y ver su estructura de datos
+
+library(readr)
+library(openxlsx)
+
+PCDatosMap <- read.csv2(paste0(csvbdd, "tPCDatosMap.csv"),
+                  stringsAsFactors = FALSE)
+str(PCDatosMap)
+
+#Seleccionar las columnas necesarias
+listaPCDatosMap <- c("Estadillo", "CoorX", "CoorY", "Huso")
+
+library(dplyr) 
+coord <- PCDatosMap %>%
+  select(all_of(listaPCDatosMap))
+
+str(coord)
+
+
+#Leer el csv de pies mayores y ver su estructura de datos
+PCMayores <- read.csv2(paste0(csvbdd, "tPCMayores.csv"),
+                       stringsAsFactors = FALSE)
+str(PCMayores)
+
+
+#Enlace a instrucciones de datos de campo 
+#https://www.miteco.gob.es/content/dam/miteco/es/biodiversidad/temas/
+#inventarios-nacionales/ifn/ifn4/documentador_ifn4_campo_tcm30-536595.pdf
+
+#Tras revisar los datos en las instrucciones de campo del IFN4 se van a eliminar
+#los siguientes datos:
+
+#Eliminar pies nuevos medidos en IF4 pero no en IF3 (0 y 000)
+#Eliminar pies medidos en IF3 y que son tocón en IF4 (0 y 000)
+#Eliminar pies medidos en IF3 y que son tocón descomuesto en IF4 (444)
+#Eliminar pies medidos en IF3 y que están muertos en campo en IF4 (888)
+#Eliminar pies medidos en IF3 que en IF4 se consideran matorral (666)
+#Eliminar pies que no se midieron por error, son candelabro o bifurcación (999)
+
+piesIF3y4 <- PCMayores %>%
+  filter(!OrdenIf3 %in% c("0", "000"), 
+         !OrdenIf4 %in% c("0", "000", "444", "888", "666", "999"))
+
+#Crear directorio para guardar el archivo
+dir.create("D:/TFMT/IFN4_Teruel/datosInv/", recursive = TRUE)
+
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+#Guardar la nueva tabla con los datos de las parcelas
+write_excel_csv2(piesIF3y4, paste0(csvInv, "piesIfn3y4.csv"))
+
+
+#Seleccionar los valores únicos por estadillo
+estadIF3y4 <- piesIF3y4 %>%
+  distinct(Estadillo) %>%
+  select(Estadillo)
+
+
+#Leer el csv de características de las parcelas y ver su estructura de datos
+PCParcelas <- read.csv2(paste0(csvbdd, "tPCParcelas.csv"),
+                        stringsAsFactors = FALSE)
+str(PCParcelas)
+
+#Seleccionar los valores de estadillo y MC
+modcom <- PCParcelas %>%
+  select(Estadillo, ModComb)
+
+#Unir las tres tablas de datos dejando solo las parcelas de "estadIF3y4" que son
+#las que se han levantado en el Ifn3 y el Ifn4
+parcelas <- estadIF3y4 %>%
+  inner_join(coord, by = "Estadillo") %>%  # Unir statPM con coord
+  inner_join(modcom, by = "Estadillo") 
+
+
+#Guardar la nueva tabla con los datos de las parcelas
+write_excel_csv2(parcelas, paste0(csvInv, "parceIfn3y4.csv"))
+
+#Comprobar la distribución de los modelos de combustible en la provincia
+library(ggplot2)
+ggplot(parcelas, aes(x = ModComb, fill = factor(ModComb))) +
+  geom_histogram(binwidth = 1, color = "black", alpha = 0.8) +
+  scale_fill_manual(
+    values = rainbow(length(unique(parcelas$ModComb)))) +  # Corregido: paréntesis balanceados
+      labs(
+        title = "Histograma de Modelos de Combustible en Teruel",
+        x = "Modelos de combustible",
+        y = "Frecuencia",
+        fill = "Modelo"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.5, face = "bold")
+        )
+
+#El modelo de combustible más abundante con diferencia es el 5, seguido de los 
+#modelos 6, 7 y 8. Entre los modelos de pasto destaca el 2.
+
+
+
+#Dividir los datos por huso para poder convertirlos a capa vectorial
+parc30 <- parcelas %>%
+  filter(Huso == 30)
+
+parc31 <- parcelas %>%
+  filter(Huso == 31)
+
+
+#Convertir los datos en capa shp y visualizarla
+library(sf)
+shp_parc30 <- st_as_sf(parc30, coords = c("CoorX", "CoorY"), crs = 25830)
+mapview(shp_parc30)
+
+shp_parc31 <- st_as_sf(parc31, coords = c("CoorX", "CoorY"), crs = 25831)
+mapview(shp_parc31)
+
+centros30_84 <- st_transform(shp_parc30, crs = 4326)
+
+centros31_84 <- st_transform(shp_parc31, crs = 4326)
+
+shp_centros <- rbind(centros30_84, centros31_84)
+
+
+mapview(shp_centros)
+
+#Crear directorio para guardar la capa
+dir.create("D:/TFMT/cartoTeru/coord_parcelas/", recursive = TRUE)
+
+rutaparce <- "D:/TFMT/cartoTeru/coord_parcelas/"
+
+#Guardar el archivo shp de parcelas de inventario y su MC
+st_write(shp_centros, paste0(rutaparce, "coord_centros.shp"), delete_dsn = TRUE)
+
+#Hacer un buffer de 25 m a las parcelas
+shp25m_parc30 <- st_buffer(shp_parc30, 25)
+
+shp25m_parc31 <- st_buffer(shp_parc31, 25)
+
+#Cambiar a un SRC global para unir las capas y guardarlas
+
+parc30_84 <- st_transform(shp25m_parc30, crs = 4326)
+
+parc31_84 <- st_transform(shp25m_parc31, crs = 4326)
+
+shp_parcelas <- rbind(parc30_84, parc31_84)
+
+library(mapview)
+mapview(shp_parcelas)
+
+
+#Guardar el archivo shp de parcelas de inventario y su MC
+st_write(shp_parcelas, paste0(rutaparce, "coord_parcelas.shp"), delete_dsn = TRUE)
+
+
+
+############### HACER UNA MALLA PARA DESCARGAR LOS DATOS LIDAR #######
+
+#El IGN no acepta la capa de polígonos de las parcelas, entonces hay que hacer 
+#una malla de 1 km de lado como las teselas del IGN, que abarque la extensión
+#de la capa de las parcelas de inventario y fijando que comience en unas
+#coordenadas fuera de esos límites
+
+#Ver los minimos y máximos de las coord X e Y para hacer la malla desde fuera
+summary(parc30) 
+summary(parc31)
+
+grid30 <- st_make_grid(shp25m_parc30, cellsize = c(1000, 1000), 
+                       offset = c(600000, 4412000))
+
+grid31 <- st_make_grid(shp25m_parc31, cellsize = c(1000, 1000), 
+                       offset = c(240000, 4507000))
+
+
+#Convertir la malla en una capa vectorial
+shp_grid30 <- st_sf(geometry = grid30)
+
+shp_grid31 <- st_sf(geometry = grid31)
+
+
+#Seleccionar los recuadros de la malla donde hay parcelas y visualizarlos
+malla30 <- shp_grid30[lengths(st_intersects(shp_grid30, shp25m_parc30)) > 0, ]
+
+mapview(malla30)
+
+malla31 <- shp_grid31[lengths(st_intersects(shp_grid31, shp25m_parc31)) > 0, ]
+
+mapview(malla31)
+
+#Reproyectar en un SRC global para unir las capas
+malla30_84 <- st_transform(malla30, crs = 4326)
+
+malla31_84 <- st_transform(malla31, crs = 4326)
+
+shp_malla <- rbind(malla30_84, malla31_84)
+
+mapview(shp_malla)
+
+
+########### HACER UNA CAPA SHP POR CADA MC ###########
+#Crear ruta para guardar los MC
+dir.create ("D:/TFMT/cartoTeru/MCTeru/tMCr/", recursive = TRUE)
+rutaMCr <- "D:/TFMT/cartoTeru/MCTeru/tMCr/"
+
+#Abrir la capa que contiene la información
+shp_parcelas <- st_read(paste0(rutaparce, "coord_parcelas.shp"))
+
+#Hacer una lista con los MC presentes
+numMC <- unique(shp_parcelas$ModComb)
+
+#Hacer un bucle que pase por cada MC
+for(i in numMC) {
+  #Filtrar por cada MC
+  filtroMC <- shp_parcelas %>%
+    filter(ModComb == i)
+  
+  #Dar un nombre a los archivos resultantes que contenga el número de MC
+  archivo <- paste0(
+    "tMC", gsub("[^[:alnum:]]", "_", i), ".shp")
+  
+  #Guardar cada archivo resultante en la ruta que se ha creado antes
+  st_write(filtroMC, 
+           file.path(rutaMCr, archivo), delete_dsn = TRUE)
+}
+
+############### COMPROBAR Nº DE OBJETOS POR CADA MC #############
+
+#Contar el número de objetos
+obj <- shp_parcelas %>%
+  count(ModComb, name = "n_filas")
+
+#Ver el nº de objetos
+print(obj)
+
+#Según el resultado se van a realizar los siguientes agrupamientos de 50
+#parcelas aleatorias:
+#Pasto = MC1(6)+MC2(76)+MC3(3): Se cogen todas las parcelas de MC1 y MC3 y se 
+#completa hasta 50 parcelas con MC2 que se seleccionan de forma aleatoria
+#MC4(26): se cogen todas las parcrelas
+#MC5, MC6, MC7: se cogen 50 parcelas aleatorias
+#hba = MC8(171)+MC9(22): se cogen 50 parcelas aleatorias de cada modelo proporcionalmente
+#Restos = MC10(4)+MC11(18): se cogen todas las parcelas
+
+#Crear el directorio para guardar los grupos de MC
+dir.create ("D:/TFMT/cartoTeru/MCTeru/tMCgr/", recursive = TRUE)
+rutaMCgr <- "D:/TFMT/cartoTeru/MCTeru/tMCgr/"
+
+
+#Del MC2 hay que seleccionar 50-9 = 41 parcelas:
+#Filtrar parcelas del MC2
+MC2 <- shp_parcelas %>%
+  filter(ModComb == 2)
+
+#Seleccionar 41 parcelas aleatorias reproducibles
+set.seed(41) 
+MC2alea <- MC2 %>% sample_n(41)
+
+#Filtrar las parcelas del MC1 y 3
+MC1y3 <- shp_parcelas %>%
+  filter(ModComb %in% c(1, 3))
+
+#Nueva capa con parcelas MC1, MC3 y MC2 seleccionadas
+pasto <- do.call(rbind, list(MC1y3, MC2alea))
+
+#Ver la nueva capa
+mapview(pasto)
+
+#Guardar la capa sin que se sobreescriba la original, que es la de descarga
+st_write(pasto, paste0(rutaMCgr, "Tpasto.shp"), delete_dsn = FALSE)
+
+#Del MC4 hay que seleccionarlas todas:
+#Filtrar parcelas del MC4
+MC4 <- shp_parcelas %>%
+  filter(ModComb == 4)
+
+mapview(MC4)
+
+#Guardar la capa sin que se sobreescriba la original, que es la de descarga
+st_write(MC4, paste0(rutaMCgr, "Tmod4.shp"), delete_dsn = FALSE)
+
+#Del MC5, 6 y 7 hay que seleccionar 50 aleatotrias:
+
+MC567 <- c(5, 6, 7)
+
+for (i in MC567) {
+  #Establecer una semilla
+  set.seed(50)
+  
+  #Filtrar las parcelas de cada modelo
+  parce567 <- shp_parcelas %>%
+    filter(ModComb == i)
+  
+  #Seleccionar 50 parcelas aleatorias
+  alea567 <- parce567 %>%
+    sample_n(50)
+  
+  #Crear los nombres de las nuevas capas y asignarlos a una variable
+  archivo <- paste0(
+    "Tmod", gsub("[^[:alnum:]]", "_", i), ".shp")
+  
+  #Guardas las nuevas capas sin que se sobreescriban las originales de descarga
+  st_write(alea567, 
+           file.path(rutaMCgr, archivo), delete_dsn = FALSE)
+}
+
+MC5 <- st_read(paste0(rutaMCgr, "Tmod5.shp"))
+mapview(MC5)
+
+MC6 <- st_read(paste0(rutaMCgr, "Tmod6.shp"))
+mapview(MC6)
+
+MC7 <- st_read(paste0(rutaMCgr, "Tmod7.shp"))
+mapview(MC7)
+
+
+#De los MC8 y 9 hay que coger 50 parcelas entre los dos de forma proporcional
+
+#Filtrar las parcelas de los MC 8 y 9
+MC8y9 <- shp_parcelas %>% 
+  filter(ModComb %in% c(8, 9))
+
+#Agrupar las parcelas por MC y crear una nueva columna para contar el número de
+#objetos de cada MC
+MC8y9 <- MC8y9 %>% 
+  group_by(ModComb) %>% 
+  summarise(num = n())
+
+#Ver el número de parcelas de cada MC
+print(MC8y9$num)
+
+#Calcular el total de parcelas sumando los valores de la columna num
+numTotal <- sum(MC8y9$num)
+
+print(numTotal)
+
+#Hacer una columna con la proporción de parcelas de cada MC
+MC8y9 <- MC8y9 %>% 
+  mutate(prop = num / numTotal)
+
+#Ver el resultado de la proporción 
+print(MC8y9$prop)
+
+#Hacer una nueva columna con el número de parcelas a seleccionar de cada MC
+MC8y9 <- MC8y9 %>% 
+  mutate(num_parce = round(50 * MC8y9$prop))
+
+
+#Ver el número de parcelas de cada MC a seleccionar
+print(MC8y9$num_parce)
+
+#Filtrar parcelas del MC8
+MC8 <- shp_parcelas %>% 
+  filter(ModComb == 8)
+
+#Seleccionar 44 parcelas aleatorias reproducibles
+set.seed(44) 
+MC8alea <- MC8 %>% 
+  sample_n(44)
+
+print(MC8alea)
+
+#Filtrar parcelas del MC9
+MC9 <- shp_parcelas %>% 
+  filter(ModComb == 9)
+
+#Seleccionar 6 parcelas aleatorias reproducibles
+set.seed(6) 
+MC9alea <- MC9 %>% 
+  sample_n(6)
+
+print(MC9alea)
+
+#Unir ambas capas y guardarlas
+hba <- do.call(rbind, list(MC8alea, MC9alea))
+
+#Guardar la capa sin que se sobreescriba la original, que es la de descarga
+st_write(hba, paste0(rutaMCgr, "Thba.shp"), delete_dsn = FALSE)
+
+mapview(hba)
+
+#Filtrar las parcelas del resto de MC
+resto <- shp_parcelas %>%
+  filter(ModComb %in% c(10, 11))
+
+#Guardar la capa sin que se sobreescriba la original, que es la de descarga
+st_write(resto, paste0(rutaMCgr, "Tresto.shp"), delete_dsn = FALSE)
+
+mapview(resto)
+
+#Hacer una capa que una todas las capas y guardarla
+MCrf <- do.call(rbind, list(pasto, MC4, MC5, MC6, MC7, hba, resto))
+
+regisModComb <- MCrf %>%
+  count(ModComb, name = "n_filas")
+
+# Ver el resultado
+print(regisModComb)
+
+#Guardar la capa sin que se sobreescriba la original, que es la de descarga
+st_write(MCrf, paste0(rutaMCgr, "TMCrf.shp"), delete_dsn = FALSE)
+
+mapview(MCrf)
+
+
+#Guardar los datos de las parcelas seleccionadas como csv
+centrosMC <- shp_centros %>%
+  filter(Estadillo %in% MCrf$Estadillo)
+
+st_write(centrosMC, paste0(rutaparce, "centrosMC.shp"), delete_dsn = FALSE)
+
+#Guardar la capa coomo archivo csv compatible con excel.
+xyMC <- st_coordinates(centrosMC)
+
+centrosMC$Xmc <- xyMC[, 1]
+centrosMC$Ymc <- xyMC[, 2]
+
+centrosMC <- st_drop_geometry(centrosMC)
+
+#Guardar la nueva tabla con los datos de las parcelas
+write_excel_csv2(centrosMC, paste0(csvInv, "centrosMC.csv"))
+
+
+mapview(pasto, col.regions = "#00FF00", layer.name = "Pasto") +  # Verde
+  mapview(MC4, col.regions = "#0000FF", layer.name = "MC4") +    # Azul
+  mapview(MC5, col.regions = "#FF0000", layer.name = "MC5") +    # Rojo
+  mapview(MC6, col.regions = "#FFA500", layer.name = "MC6") +    # Naranja
+  mapview(MC7, col.regions = "#800080", layer.name = "MC7") +    # Morado
+  mapview(hba, col.regions = "#FFFF00", layer.name = "HBA") +    # Amarillo
+  mapview(resto, col.regions = "#808080", layer.name = "Resto")
+
+
+
+#Seleccionar solo los recuadros de la malla de las parcelas seleccionadas
+malla_ign <- shp_malla[lengths(st_intersects(shp_malla, MCrf)) > 0, ]
+
+mapview(malla_ign) #Este es el archivo que hay que subir al IGN
+
+str(malla_ign)
+
+
+#Definir la ruta para guardar la malla
+dir.create ("D:/TFMT/cartoTeru/mallaIGN/", recursive = TRUE)
+
+rutaMalla <- "D:/TFMT/cartoTeru/mallaIGN/"
+
+#Guardar la capa sin que se sobreescriba la original, que es la de descarga
+st_write(malla_ign, paste0(rutaMalla, "mallaIGN.shp"), delete_dsn = FALSE)
+
+
