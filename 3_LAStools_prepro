@@ -1,0 +1,147 @@
+
+ESTE CÓDIGO SE EJECUTA CON LÍNEA DE COMANDOS CMD Y REQUIERE LA DESCARGA PREVIA DE LAStools
+
+################### ARCHIVOS DE LA TERCERA COBERTURA ##################################
+
+
+Metadatos
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR3cob\*.laz -odir E:\TFMT\LiDAR3cob\info3cob -otxt
+
+Hay archivos en epsg 25830 y otros en epsg 25831, estos además tienen un factor de escala que son números tipo 0.0000000000002
+
+Indexar los archivos
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR3cob\*.laz
+
+Guardar los archivos de cada src en carpetas diferentes
+
+Cambiar el factor de escala de los archivos que lo tienen mal
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR3cob\FactorEscalaMal\*.laz -olaz -odir E:\TFMT\LiDAR3cob\reescalado\ -rescale 0.001 0.001 0.001 -auto_reoffset
+
+Volver a indexar los archivos en epsg 25831 que se han reescalado
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR3cob\epsg25831\*.laz
+
+Obtener los metadatos de los archivos reescalados
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR3cob\epsg25831\*.laz -odir E:\TFMT\LiDAR3cob\epsg25831\info3c -otxt
+
+Reproyectar los archivos reescalados a epsg 25830 para poder hacer un catalogo en R
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR3cob\epsg25831\*.laz -olaz -odir E:\TFMT\LiDAR3cob\epsg25830rep -epsg 25831 -target_epsg 25830
+
+Indexar los archivos reproyectados
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR3cob\epsg25830rep\*.laz
+
+Obtener los metadatos de los archivos reproyectados
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR3cob\epsg25830rep\*.laz -odir E:\TFMT\LiDAR3cob\epsg25830rep\info3crep -otxt
+
+Volver a reescalar lor archivos reproyectados porque se les ha quedado factor de escala 0.01 0.01 0.001
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR3cob\epsg25830rep\*.laz -olaz -odir E:\TFMT\LiDAR3cob\epsg25830rees -rescale 0.001 0.001 0.001 -auto_reoffset
+
+Obtener metadatos de archivos reproyectados y vueltos a reescalar
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR3cob\epsg25830rees\*.laz -odir E:\TFMT\LiDAR3cob\epsg25830rees\info3crees -otxt
+
+Indexar los archivos reproyectados y vueltos a reescalar
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR3cob\epsg25830rees\PNOA_2023_ARA_763-4522_NPC01.laz
+
+Juntar en la misma carpeta los archivos en epsg 25830 y los reproyectados a epsg 25830 para hacer el catálogo en R
+
+
+############### ARCHIVOS DE LA SEGUNDA COBERTURA ####################
+
+Indexado
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR2cob\*.laz
+
+Metadatos
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR2cob\*.laz -odir E:\TFMT\LiDAR2cob\info2cob -otxt
+
+Hay archivos sin SRC, otros en WGS84-30N, WGS84-31N, ETRS89-30N. ETRS89-31N, NAD
+También hay archivos con el factor de escala 0.01 0.01 0.01 y tipo 0.000000000002 
+
+En R se hace un bucle que saque en una tabla el nombre del archivo, su SRC y su factor de escala.
+Los archivos con factor de escala 0.00000000002 son del src epsg 25831
+
+En R se hace un bucle para guardar los archivos en carpetas independientes por cada src
+
+Reproyectar todas las capas de la 2ª cobertura al datum ETRS89 y el SRC 25830 y 25831
+
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR2cob\carpetasCRS\epsg32630\*.laz -olaz -odir E:\TFMT\LiDAR2cob\carpetasCRS\epsg25830 -epsg 32630 -target_epsg 25830
+
+Darle un SRC a los archivos que no tienen
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR2cob\carpetasCRS\crsNA\nodef\*.laz -olaz -odir E:\TFMT\LiDAR2cob\carpetasCRS\crsNA -epsg 25830
+
+Cambiar el factor de escala a los archivos que lo tienen mal
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR2cob\escalaMal\*.laz -olaz -odir E:\TFMT\LiDAR2cob\reescalado\ -rescale 0.001 0.001 0.001 -auto_reoffset
+
+Reagrupar los archivos en solo dos carpetas, una para 25830 y otra para 25831 y volver a indexar los nuevos archivos
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR2cob\epsg25830\*.laz
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR2cob\epsg25831\*.laz
+
+Reproyectar los archivos en epsg 25831 a 25830
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR2cob\epsg25831\*.laz -olaz -odir E:\TFMT\LiDAR2cob\epsg25830rep -epsg 25831 -target_epsg 25830
+
+Obtener los metadatos de los archivos reproyectados
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR2cob\epsg25830rep\*.laz -odir E:\TFMT\LiDAR2cob\epsg25830rep\info2crep -otxt
+
+Volver a reescalar los archivos reproyectados
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR2cob\epsg25830rep\*.laz -olaz -odir E:\TFMT\LiDAR2cob\epsg25830rees\ -rescale 0.001 0.001 0.001 -auto_reoffset
+
+Obtener los metadatos de los archivos reproyectados y vueltos a reescalar
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR2cob\epsg25830rees\*.laz -odir E:\TFMT\LiDAR2cob\epsg25830rees\info2crees -otxt
+
+Volver a indexar los archivos reproyectados y vueltos a reescalar
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR2cob\epsg25830rees\*.laz
+
+Juntar en la misma carpeta los archivos en epsg 25830 y los reproyectados a epsg 25830 para hacer el catálogo en R
+
+
+
+############### ARCHIVOS DE LA PRIMERA COBERTURA ####################
+
+Indexado
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR1cob\*.laz
+
+Metadatos
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR1cob\*.laz -odir E:\TFMT\LiDAR1cob\info1cob -otxt
+
+Los archivos están en epsg 25830 y epsg 25831 el factor de escala es correcto
+Se agrupan los datos en dos carpetas según el src
+
+Reproyectar los archivos de epsg 25831 a epsg 25830
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR1cob\epsg25831\*.laz -olaz -odir E:\TFMT\LiDAR1cob\epsg25830rep -epsg 25831 -target_epsg 25830
+
+Obtener los metadatos de los archivos reproyectados
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR1cob\epsg25830rep\*.laz -odir E:\TFMT\LiDAR1cob\epsg25830rep\info1crep -otxt
+
+Volver a reescalar los archivos reproyectados
+E:\LAStools\bin\las2las -i E:\TFMT\LiDAR1cob\epsg25830rep\*.laz -olaz -odir E:\TFMT\LiDAR1cob\epsg25830rees\ -rescale 0.001 0.001 0.001 -auto_reoffset
+
+Obtener los metadatos de los archivos reproyectados y vueltos a reescalar
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR1cob\epsg25830rees\*.laz -odir E:\TFMT\LiDAR1cob\epsg25830rees\info1crees -otxt
+
+Volver a indexar los archivos reproyectados y vueltos a reescalar
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR1cob\epsg25830rees\*.laz
+
+Juntar en la misma carpeta los archivos en epsg 25830 y los reproyectados a epsg 25830 para hacer el catálogo en R
+
+Una vez se han hecho los recortes en R y se han normalizado las parcelas se indexan los archivos y se obteienen sus metadatos en LASTools
+
+Indexar los archivos de las parcelas noramlizadas de la 3ª cobertura
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR3cob\recN3c\*.laz
+
+Obtener los metadatos de los archivos normalizados de la 3ª cobertura
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR3cob\recN3c\*.laz -odir E:\TFMT\LiDAR3cob\recN3c\infoRecN3c -otxt
+
+Indexar los archivos de las parcelas noramlizadas de la 2ª cobertura
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR2cob\recN2c\*.laz
+
+Obtener los metadatos de los archivos normalizados de la 2ª cobertura
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR2cob\recN2c\*.laz -odir E:\TFMT\LiDAR2cob\recN2c\infoRecN2c -otxt
+
+Indexar los archivos de las parcelas noramlizadas de la 1ª cobertura
+E:\LAStools\bin\lasindex -i E:\TFMT\LiDAR1cob\recN1c\*.laz
+
+Obtener los metadatos de los archivos normalizados de la 1ª cobertura
+E:\LAStools\bin\lasinfo -i E:\TFMT\LiDAR1cob\recN1c\*.laz -odir E:\TFMT\LiDAR1cob\recN1c\infoRecN1c -otxt
+
+
+
+
+
