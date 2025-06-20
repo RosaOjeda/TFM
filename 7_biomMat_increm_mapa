@@ -1,0 +1,775 @@
+
+#Este código sirve para calcular la biomasa del matorral a parti de la base
+#de datos SIG del IFN y del MFN25
+
+
+#Enlace a instrucciones de datos SIG 
+#https://www.miteco.gob.es/content/dam/miteco/es/biodiversidad/temas/
+#inventarios-nacionales/documentador_sig_tcm30-536622.pdf
+
+
+library(openxlsx)
+
+################## OBTENER LOS DATOS NECESARIOS ############################
+
+#Ruta a tablas en csv
+#Previamente se ha comprobado abriendo el archivo en txt que el separador de las
+#columnas es ; y el decimal es , 
+#Los separadores y decimales son los mismos en todas las tablas.
+
+csvbdd <- "D:/TFMT/IFN4_Teruel/tablas_bdd/"
+
+
+
+#Leer el archivo Poligon que tiene las formaciones arbustivas y ver sus datos
+Poligon <- read.csv2(paste0(csvbdd, "tPoligon.csv"),
+                     stringsAsFactors = FALSE)
+str(Poligon)
+
+#Este archivo no contine el número de estadillo porque se refiere a teselas del 
+#MFE25, por eso hay que abir un archivo que relacione las parcelas de inventario
+#con esas teselas
+
+
+#Leer el csv de Parcpoly y ver su estructura de datos
+Parcpoly <- read.csv2(paste0(csvbdd, "tParcpoly.csv"),
+                      stringsAsFactors = FALSE)
+str(Parcpoly)
+
+
+listaParcpoly <- c("Parcela", "Polygon")
+
+library(tidyverse)
+
+ppoly <- Parcpoly %>%
+  select(all_of(listaParcpoly))
+
+#La columna Parcela se corresponde con la columna Estadillo de las tabla de datos
+#de campo. Se cambia de nombre para seleccionar las parcelas de la capa shp.
+
+ppoly <- ppoly %>% 
+  rename(Estadillo = Parcela)
+
+str(ppoly)
+
+ppoly <- ppoly %>%
+  filter(Estadillo %in% parce$Estadillo)
+
+#Seleccionar las variables de Poligon con las que se va a calcular la biomasa
+
+listaMato <- c("POLYGON", "ForMat", "ForMat2", "HmMat",
+               "FccMat")
+
+vblesMat <- Poligon %>%
+  select(all_of(listaMato))
+
+#La columna POLYGON se corresponde con la columna Polygon de la tabla Parcpoly
+#Se cambia de nombre para después unir las tablas por ese atributo
+vblesMat <- vblesMat %>% 
+  rename(Polygon = POLYGON)
+
+datos_mat <- merge(ppoly, vblesMat, by = "Polygon")
+print(names(datos_mat))
+
+
+#Eliminar la columna Polygon que ya no es necesaria. 
+datos_mat <- datos_mat %>%
+  select(-"Polygon")
+
+str(datos_mat)
+
+#Guardar el archivo con los datos para calcular la biomasa del matorral
+write_excel_csv2(datos_mat, paste0(csvInv, "datos_matIFN4.csv"))
+
+
+########### IDENTIFICAR LAS ESPECIES DE MATORRAL ##########################
+
+#Ruta a los archivos de datos de inventario
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+#Abrir el csv con los datos del matorral
+datos_mat <- read.csv2(paste0(csvInv, "datos_matIFN4.csv"),
+                       stringsAsFactors = FALSE)
+
+#Abrir el archivo con datos de inventario de las parcelas
+stParceOK <- read.csv2(paste0(csvInv, "stParceOK.csv"),
+                       stringsAsFactors = FALSE)
+
+
+#Añadir la columna de superficie de parcela a los datos de matorral
+datos_mat <- datos_mat %>%
+  left_join(
+    stParceOK %>% select(Estadillo, Sparce_m2),  # Seleccionar solo las columnas necesarias
+    by = "Estadillo"                              # Clave de unión
+  )
+
+
+#Ver el número de parcelas que tienen cada especie de matorral como ForMat y ForMat2
+sp_mat <- datos_mat %>%
+  group_by(Valor = ForMat) %>%
+  summarise(f_ForMat = n()) %>%
+  full_join(
+    datos_mat %>%
+      group_by(Valor = ForMat2) %>%
+      summarise(f_ForMat2 = n()),
+    by = "Valor"
+  )
+
+sp_mat[is.na(sp_mat)] <- 0
+
+print(sp_mat, n = 25)
+
+#Modificar los códigos de matorral de IFN a sus equivalencia en la
+#Taxonomía jerarquizada de cubiertas vegetales en Montero et al. (2020)
+
+#https://www.mapa.gob.es/es/desarrollo-rural/publicaciones/
+#publicaciones-de-desarrollo-rural/librobiomasadigital_tcm30-538563.pdf 
+
+#Cambiar 12 x 111; 17 x 170; 22 x 213-214; 23 x 232; 24 x 248 y 249; 25 x 221-222; 
+# 27 x 101; 21 x 261-262-263; 
+# 26 x 250 a 256; 28 x 281-282
+
+# 11 x 113 no hay. No se calcula porque está solo en 1 parcela como ForMat2
+# 21 x 261-262-263. No hay. son 7-10-1 formaciones.
+# 28 x 281-282. No hay. son 2-1 formaciones
+
+
+mato <- datos_mat %>%
+  mutate(
+    ForMat = case_when(
+      ForMat %in% c(111, 1211) ~ 12,
+      ForMat == 170 ~ 17,
+      ForMat %in% c(213, 214) ~ 22,
+      ForMat == 232 ~ 23,
+      ForMat %in% c(248, 249) ~ 24,
+      ForMat %in% c(221, 222) ~ 25,
+      ForMat %in% 250:256 ~ 26,
+      ForMat == 101 ~ 27,
+      TRUE ~ ForMat  #Deja sin cambiar el resto
+    ),
+    ForMat2 = case_when(
+      ForMat2 %in% c(111, 1211) ~ 12,
+      ForMat2 == 170 ~ 17,
+      ForMat2 %in% c(213, 214) ~ 22,
+      ForMat2 == 232 ~ 23,
+      ForMat2 %in% c(248, 249) ~ 24,
+      ForMat2 %in% c(221, 222) ~ 25,
+      ForMat2 %in% 250:256 ~ 26,
+      ForMat2 == 101 ~ 27,
+      TRUE ~ ForMat2
+    )
+  )
+
+
+############## CALCULAR LA CANTIDAD DE MATORRAL ############################
+
+
+#Estas son las ecuaciones y los parámetros que hay que poner para cada especie
+# 12: W (tn ha-1)=a1 • Hm arcoseno √(FCC/100) ; a1 0,6441192
+# 16: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 0,8170986; b1 1,2403275
+# 17: W (tn ha-1)=a1 • [Hmb1 • arcoseno (√(FCC/100)]b2; a1 2,0135328; b1 0,8191936; b2 0,9125035
+# 23: W (tn ha-1)=a1 • [Hmb1 • arcoseno (√(FCC/100)]b2; a1 9,018966; b1 0,329990; b2 0,419907
+# 24: W (tn ha-1)=a1 • Hmb1 • arcoseno (√(FCC/100)b2; a1 1,4901824; b1 0,988850; b2 1,0275925
+# 25: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,7397887; b1 0,884211
+# 26: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,378164; b1 0,999194
+#27: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,7222769; b1 0,7768124
+#22; W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1
+
+
+
+#Hacer una función que calcule W para cada especie con sus parámetros a y b
+calcular_W <- function(codigo, Hm, FCC, a1, b1 = NULL, b2 = NULL) {
+  arcseno <- asin(sqrt(FCC / 100))
+  case_when(
+    codigo == 12 ~ a1 * Hm * arcseno,
+    codigo == 17 ~ a1 * (Hm^b1 * arcseno)^b2,
+    codigo == 22 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 23 ~ a1 * (Hm^b1 * arcseno)^b2,
+    codigo == 24 ~ a1 * Hm^b1 * arcseno^b2,
+    codigo == 25 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 26 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 27 ~ a1 * (Hm * arcseno)^b1,
+    TRUE ~ NA_real_
+  )
+}
+
+#Dar valor a los parámetros a y b de las ecuaciones y a las variables
+mato <- mato %>%
+  mutate(
+    W_ForMat_tha = case_when(
+      ForMat %in% c(12, 17, 22, 23, 24, 25, 26, 27) ~ calcular_W(
+        codigo = ForMat,
+        Hm = HmMat,  
+        FCC = FccMat,
+        a1 = case_when(
+          ForMat == 12 ~ 0.6441192,
+          ForMat == 17 ~ 2.0135328,
+          ForMat == 22 ~ 2.0483619,
+          ForMat == 23 ~ 9.018966,
+          ForMat == 24 ~ 1.4901824,
+          ForMat == 25 ~ 1.7397887,
+          ForMat == 26 ~ 1.378164,
+          ForMat == 27 ~ 1.7222769
+        ),
+        b1 = case_when(
+          ForMat == 17 ~ 0.8191936,
+          ForMat == 22 ~ 0.8613609,
+          ForMat == 23 ~ 0.329990,
+          ForMat == 24 ~ 0.988850,
+          ForMat == 25 ~ 0.884211,
+          ForMat == 26 ~ 0.999194,
+          ForMat == 27 ~ 0.7768124,
+          TRUE ~ NA_real_
+        ),
+        b2 = case_when(
+          ForMat == 17 ~ 0.9125035,
+          ForMat == 23 ~ 0.419907,
+          ForMat == 24 ~ 1.0275925,
+          TRUE ~ NA_real_
+        )
+      ),
+      TRUE ~ 0
+    ) * 0.6,  #Ponderar al 60%
+    
+    W_ForMat2_tha = case_when(
+      ForMat2 %in% c(12, 17, 22, 23, 24, 25, 26, 27) ~ calcular_W(
+        codigo = ForMat2,
+        Hm = HmMat,
+        FCC = FccMat,
+        a1 = case_when(
+          ForMat2 == 12 ~ 0.6441192,
+          ForMat2 == 17 ~ 2.0135328,
+          ForMat2 == 22 ~ 0.8613609,
+          ForMat2 == 23 ~ 9.018966,
+          ForMat2 == 24 ~ 1.4901824,
+          ForMat2 == 25 ~ 1.7397887,
+          ForMat2 == 26 ~ 1.378164,
+          ForMat2 == 27 ~ 1.7222769
+        ),
+        b1 = case_when(
+          ForMat2 == 17 ~ 0.8191936,
+          ForMat2 == 22 ~ 0.8613609,
+          ForMat2 == 23 ~ 0.329990,
+          ForMat2 == 24 ~ 0.988850,
+          ForMat2 == 25 ~ 0.884211,
+          ForMat2 == 26 ~ 0.999194,
+          ForMat2 == 27 ~ 0.7768124,
+          TRUE ~ NA_real_
+        ),
+        b2 = case_when(
+          ForMat2 == 17 ~ 0.9125035,
+          ForMat2 == 23 ~ 0.419907,
+          ForMat2 == 24 ~ 1.0275925,
+          TRUE ~ NA_real_
+        )
+      ),
+      TRUE ~ 0
+    ) * 0.4,  #Ponderar al 40%
+    
+    #Sumar el resultado de cada especie
+    W_kg_m2 = (W_ForMat_tha + W_ForMat2_tha) * 1000 / 10000 #Pasar a kg/m2
+  )
+
+#Eliminar las filas en las que el resultado de biomasa del matorral es 0
+mato <- mato %>%
+  filter(W_kg_m2 != 0)
+
+
+
+########### CANTIDAD DE MATORRAL POR M2 EN LAS PARCELAS ###############
+
+#Calcular la superficie ocupada por el matorral en las parcelas
+matoTodo <- mato %>%
+  mutate(supMato_m2 = Sparce_m2 * FccMat / 100 )
+
+supMatoTot_m2 <- sum(matoTodo$supMato_m2, na.rm = TRUE)
+
+print(supMatoTot_m2)  #El resultado es 51266.87 m2 de superficie entre todas las parcelas
+#Esto represental el 16,8% de la superficie total de las parcelas que hay calculada abajo
+
+supTot_m2 <- sum(matoTodo$Sparce_m2, na.rm = TRUE)
+
+print(supTot_m2) #El resultado es 305127.2 m2 de toda la superficie de las parceals
+#sin tener en cuenta la FccMat
+
+#Calcular la cantidad total de matorral en las parcelas
+matoTodo <- matoTodo %>%
+  mutate(kg_mat_parcelas = supMato_m2 * W_kg_m2)
+
+write_excel_csv2(matoTodo, paste0(csvInv, "mat_kg_parce.csv"))
+
+
+totalBiomMato <- sum(matoTodo$kg_mat_parcelas, na.rm = TRUE)
+
+print(totalBiomMato) #El resultado es 16330.21 kg biomasa en el total de las parcelas
+#El total de superficie con matorral es 51266.87 m2
+
+#Calcular la cantidad media de matorral por m2 en las parcelas
+print(mat_m2 <- 16330.21 / 51266.87)
+#Sale 0,32 kg/m2 de media de biomasa de matorral
+
+
+################ INCREMENTO ANUAL ESTIMADO DEL MATORRAL ####################
+
+
+#Se utilizan estas ecuaciones de Montero (2020)
+# 12: Y (tn ha-1año-1)=a1• Hm • arcoseno √(FCC/100); a1 0,06662938
+# 17: Y (tn ha-1año-1)=a1• [Hmb1 • arcoseno √(FCC/100)]b2; a1 5,570363; b1 -0,353561; b2 1,436201
+# 23: Y (tn ha-1año-1)=a1• [Hm • arcoseno √(FCC/100)]b1; a1 0,2474103; b1 0,8828921
+# 24: Y (tn ha-1año-1)=a1• Hmb1 • arcoseno √(FCC/100)b2; a1 1,1624006; b1 0,203849; b2 2,3009147
+# 25: Y (tn ha-1año-1)=a1• [Hm • arcoseno √(FCC/100)]b1; a1 0,4405185; b1 0,534338
+# 26: Y (tn ha-1año-1)=a1• [Hm • arcoseno √(FCC/100)]b1; a1 0,24304; b1 0,709618
+# 27: Y (tn ha-1año-1)=a1• [Hmb1 • arcoseno √(FCC/100)]b2
+# 22: Y (tn ha-1año-1)=a1• [Hm • arcoseno √(FCC/100)]b1
+
+
+#Hacer función para aplicar a cada especie su ecuación
+calcular_Y <- function(codigo, Hm, FCC, a1, b1 = NULL, b2 = NULL) {
+  arcseno <- asin(sqrt(FCC / 100))
+  
+  case_when(
+    codigo == 12 ~ a1 * Hm * arcseno,
+    codigo == 17 ~ a1 * (Hm^b1 * arcseno)^b2,
+    codigo == 22 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 23 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 24 ~ a1 * Hm^b1 * arcseno^b2,
+    codigo == 25 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 26 ~ a1 * (Hm * arcseno)^b1,
+    codigo == 27 ~ a1 * (Hm^b1 * arcseno)^b2,
+    TRUE ~ NA_real_  
+    )
+}
+
+
+#Aplicar la función ponderando por 60% y 40%
+matoPrev <- matoTodo %>%
+  mutate(
+    Y_ForMat_thay = case_when(
+      ForMat %in% c(12, 17, 22, 23, 24, 25, 26, 27) ~ calcular_Y(
+        codigo = ForMat,
+        Hm = HmMat,  
+        FCC = FccMat, 
+        a1 = case_when(
+          ForMat == 12 ~ 0.06662938,
+          ForMat == 17 ~ 5.570363,
+          ForMat == 22 ~ 0.0383463,
+          ForMat == 23 ~ 0.2474103,
+          ForMat == 24 ~ 1.1624006,
+          ForMat == 25 ~ 0.4405185,
+          ForMat == 26 ~ 0.24304,
+          ForMat == 27 ~ 0.7368077
+        ),
+        b1 = case_when(
+          ForMat == 17 ~ -0.353561,
+          ForMat == 22 ~ 1.3885334,
+          ForMat == 23 ~ 0.8828921,
+          ForMat == 24 ~ 0.203849,
+          ForMat == 25 ~ 0.534338,
+          ForMat == 26 ~ 0.709618,
+          ForMat == 27 ~ 0.386989,
+          TRUE ~ NA_real_
+        ),
+        b2 = case_when(
+          ForMat == 17 ~ 1.436201,
+          ForMat == 24 ~ 2.3009147,
+          ForMat == 27 ~ 1.8208543,
+          TRUE ~ NA_real_
+        )
+      ),
+      TRUE ~ NA_real_
+    ) * 0.6,  #Ponderar 60%
+    
+    # Cálculo para ForMat2 (40%)
+    Y_ForMat2_thay = case_when(
+      ForMat2 %in% c(12, 17, 22, 23, 24, 25, 26,27) ~ calcular_Y(
+        codigo = ForMat2,
+        Hm = HmMat,
+        FCC = FccMat,
+        a1 = case_when(
+          ForMat2 == 12 ~ 0.06662938,
+          ForMat2 == 17 ~ 5.570363,
+          ForMat2 == 22 ~ 0.0383463,
+          ForMat2 == 23 ~ 0.2474103,
+          ForMat2 == 24 ~ 1.1624006,
+          ForMat2 == 25 ~ 0.4405185,
+          ForMat2 == 26 ~ 0.24304,
+          ForMat2 == 27 ~ 0.7368077
+        ),
+        b1 = case_when(
+          ForMat2 == 17 ~ -0.353561,
+          ForMat2 == 22 ~ 1.3885334,
+          ForMat2 == 23 ~ 0.8828921,
+          ForMat2 == 24 ~ 0.203849,
+          ForMat2 == 25 ~ 0.534338,
+          ForMat2 == 26 ~ 0.709618,
+          ForMat2 == 27 ~ 0.386989,
+          TRUE ~ NA_real_
+        ),
+        b2 = case_when(
+          ForMat2 == 17 ~ 1.436201,
+          ForMat2 == 24 ~ 2.3009147,
+          ForMat2 == 27 ~ 1.8208543,
+          TRUE ~ NA_real_
+        )
+      ),
+      TRUE ~ NA_real_
+    ) * 0.4,  #Ponderar 40%
+    
+    Y_kg_m2_y = (coalesce(Y_ForMat_thay, 0) + coalesce(Y_ForMat2_thay, 0)) * 1000 / 10000
+  )
+
+#Calcular el incremento anual total de biomasa en las parcelas
+matoPrev <- matoPrev %>%
+  mutate(Y_mat_kgm2parce = supMato_m2 * Y_kg_m2_y)
+
+totalYmato <- sum(matoPrev$Y_mat_kgm2parce, na.rm = TRUE)
+
+print(totalYmato) # El resultado es 1991.571 kg al año en todas las parcelas.
+
+#Calcular el incremento en 10 años
+matoEn10 <- matoPrev %>%
+  mutate(mato10y_m2 = Y_kg_m2_y * 10 + W_kg_m2) %>%
+  mutate(mato10yParceKg = mato10y_m2 * supMato_m2)
+
+totalYmato10 <- sum(matoEn10$mato10yParceKg, na.rm = TRUE)
+
+print(totalYmato10) #El resultado es 36245.92 kg en el total de las parcelas
+
+# Calcular sumas
+sumatorios <- matoEn10 %>%
+  summarise(
+    "Actual" = sum(kg_mat_parcelas, na.rm = TRUE) / 1000,  
+    "En 10 años" = sum(mato10yParceKg, na.rm = TRUE) / 1000 
+  ) %>%
+  tidyr::pivot_longer(
+    cols = everything(),
+    names_to = "Variable",
+    values_to = "Sumatorio"
+  )
+
+
+#Hacer un gráfico comparativo de la cantidad actual y el incremento estimado
+ggplot(sumatorios, aes(x = Variable, y = Sumatorio, fill = Variable)) +
+  geom_bar(stat = "identity", color = "black", width = 0.4) +
+  scale_fill_manual(
+    values = c("Actual" = "#f39c12", "En 10 años" = "#c39bd3"),  # Colores asignados a los nuevos nombres
+    labels = c("Actual", "En 10 años")  # Etiquetas de la leyenda
+  ) +
+  labs(
+    title = "Incremento de la carga de combustible del matorral",
+    x = "",
+    y = "Combustible parcelas (Tm)",
+    fill = "Momento:" # Título de la leyenda
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.text = element_text(size = 24),
+    legend.title = element_text(size = 24, face = "bold"),
+    axis.text.x = element_blank(),  # Ocultar etiquetas del eje X
+    axis.text.y = element_text(hjust = 1, size = 18),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    plot.title = element_text(size = 28, hjust = 0.5, face = "bold")
+  ) +
+  geom_text(
+    aes(label = round(Sumatorio, 1)),
+    vjust = -0.5,
+    size = 6,
+    fontface = "bold"
+  )
+
+
+#################### ESPECIES MÁS RELEVANTES EN EL INCREMENTO ##############
+#Histograma del incremento de biomasa anual de las parcelas
+
+ggplot(matoEn10, aes(x = Y_kg_m2_y)) +
+  geom_histogram(
+    bins = 30,                  # Número de barras (ajústalo)
+    fill = "#229954",           # Color de relleno (azul)
+    color = "white",            # Color del borde
+    alpha = 0.8                 # Transparencia (0-1)
+  ) +
+  labs(
+    title = "Distribución del incremento anual de biomasa por parcela",
+    x = "Incremento (kg/m²·año)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#La mayoria de las parcelas tienen un incremento inferior a 0,05 kg/m2*año
+
+#Comparar las combinaciones de especies que tienen 0,05 o más kg/m2*año de incremento
+alto_Y <- matoEn10 %>%
+  filter(Y_kg_m2_y >= 0.05) %>% 
+  group_by(ForMat, ForMat2) %>% #Tener en cuenta las dos formaciones
+  summarise(
+    n = n(),  
+    Y_promedio = mean(Y_kg_m2_y), 
+    Y_max = max(Y_kg_m2_y),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Y_promedio))
+
+
+ggplot(alto_Y, aes(x = interaction(ForMat, ForMat2), y = Y_promedio)) +
+  geom_col(fill = "#f1948a") +
+  labs(
+    title = "Combinaciones de especies con Y ≥ 0.05 kg/m²·año",
+    x = "Combinación (ForMat + ForMat2)",
+    y = "Y promedio (kg/m²·año)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#Obtener las tres especies más repetidas en los incrementos superiores a 0,05
+top_sp <- matoEn10 %>%
+  filter(Y_kg_m2_y >= 0.05) %>%  
+  select(ForMat, ForMat2) %>% 
+  pivot_longer(cols = everything(), names_to = "Tipo", values_to = "Codigo") %>%  
+  count(Codigo, sort = TRUE) %>%  
+  slice_max(n, n = 3) 
+
+
+
+#Hacer un gráfico con las especies que tienen un mayor incremento
+ggplot(top_sp, aes(x = factor(Codigo), y = n)) +
+  geom_col(fill = "#1e8449", color = "black", width = 0.4) +
+  #geom_bar(stat = "identity", width = 0.4)
+  scale_x_discrete(
+    labels = c(
+      "17" = "Coscojares",  
+      "25" = "Jarales", 
+      "26" = "Labiadas" 
+    )
+  ) +
+  labs(
+    title = "Matorral presente en parcelas con mayor\nincremento anual de biomasa",  
+    x = "Formación de matorral",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title =  element_text(
+      size = 18, 
+      hjust = 0.5,
+      vjust = 0.5, 
+      face = "bold",
+      lineheight = 1.2),  
+    text = element_text(size = 11),
+    axis.text.x = element_text(
+      size = 11, color = "black", face = "bold", margin = margin(b = 12))
+  )
+
+
+################ MAPA DE PARCELAS CON MÁS INCREMENTO DE MATORRAL ############
+
+#Identificar las parcelas donde están presentes las especies con un mayor Y
+resultados <- matoEn10 %>%
+  #Registros que tienen las especies en las dos formaciones
+  filter((ForMat %in% c(17, 25, 26) | ForMat2 %in% c(17, 25, 26)) & 
+           Y_kg_m2_y >= 0.05) %>%
+  summarise(
+    FccMat_media = mean(FccMat, na.rm = TRUE),
+    FccMat_moda = {
+      freq <- table(FccMat)
+      as.numeric(names(freq)[which.max(freq)]) #Valores más repetidos
+    },
+    HmMat_media = mean(HmMat, na.rm = TRUE),
+    HmMat_moda = {
+      freq <- table(HmMat)
+      as.numeric(names(freq)[which.max(freq)]) 
+    }
+  )
+
+#Ver el resultado
+print(resultados)
+
+
+#Abrir los archivos con la cartografía base
+
+library(sf)
+shp <- "D:/TFMT/cartoTeru/coord_parcelas/"
+
+#Ubicación de las parcelas
+centros <- st_read(paste0(shp, "centrosMC.shp"))
+#Mantener en WGS84
+
+library(mapview)
+mapview(centros)
+
+
+rutaTeru <- "D:/TFMT/cartoTeru/provTeru/"
+#Silueta de la provincia
+teru <- st_read(paste0(rutaTeru, "ogr_1737345219701.shp"))
+mapview(teru)
+
+#Unir los datos con la geometría
+MasMato <- matoEn10 %>%
+  full_join(centros, by = "Estadillo")
+
+class(MasMato)
+
+mato_sf <- st_as_sf(MasMato)
+
+st_crs(mato_sf)
+
+
+
+#Ver los MC asignados en IFN a las parcelas con los mayores incrementos
+top_MC <- MasMato %>%
+  filter(Y_kg_m2_y >= 0.05) %>% 
+  select(ModComb) %>%  
+  pivot_longer(cols = everything(), names_to = "Tipo", values_to = "Codigo") %>% 
+  slice_max(n, n = 3)
+
+print(top_MC)
+
+
+
+#Seleccionar las parcelas con incremento alto
+puntos_altos <- mato_sf %>%
+  filter(Y_kg_m2_y >= 0.05) %>%
+  st_as_sf()  
+
+puntos_altos <- puntos_altos %>%
+  mutate(
+    categoria = case_when(
+      Y_kg_m2_y >= 0.05 & Y_kg_m2_y < 0.075 ~ "0.05 - 0.075",
+      Y_kg_m2_y >= 0.075 & Y_kg_m2_y < 0.1 ~ "0.075 - 0.1",
+      Y_kg_m2_y >= 0.1 ~ "> 0.1"
+    ),
+    #Convertir a factor para mantener el orden especificado
+    categoria = factor(
+      categoria,
+      levels = c("0.05 - 0.075", "0.075 - 0.1", "> 0.1"),  # Orden deseado
+      ordered = TRUE  # Marcar como ordenado
+    )
+  )
+
+
+library(ggspatial)  # Para elementos cartográficos
+
+#Hacer una paleta de colores para el mapa
+color <- c("0.05 - 0.075" = "#f4d03f",
+           "0.075 - 0.1" = "#e67e22",
+           "> 0.1" = "#d7191c")
+
+
+mapa_principal <- ggplot() +
+  #Silueta de la provincia
+  geom_sf(data = teru, fill = NA, color = "#000000", linewidth = 0.5) +
+  geom_sf(   #Puntos con las parcelas
+    data = puntos_altos,
+    aes(fill = categoria, size = Y_kg_m2_y),
+    shape = 21,
+    color = "black",
+    stroke = 0.3,
+    alpha = 0.8
+  ) +
+  scale_fill_manual(
+    name = "Biomasa (kg/m²·año)", 
+    values = color,
+    breaks = names(color),  
+    drop = FALSE,
+    guide = "none" #Ocultar la escla de color
+  ) +
+  
+  scale_size_continuous(
+    name = "Combustible (kg/m²·año)",
+    range = c(2, 8),
+    breaks = c(0.06, 0.08, 0.11),
+    labels = c("0.05 - 0.075", "0.075 - 0.1", "> 0.1"),
+    guide = guide_legend( #Mostrar la escala de tamaño con colores
+      override.aes = list(
+        fill = color
+      )
+    )
+  ) +
+  annotation_north_arrow( #Rosa de los vientos
+    location = "tr", 
+    which_north = "true",
+    style = north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    ),
+    pad_x = unit(0.4, "cm"),
+    pad_y = unit(0.4, "cm")
+  ) +
+  annotation_scale(  #Escala gráfica
+    location = "bl",  
+    width_hint = 0.25,  
+    bar_cols = c("black", "white"),
+    text_col = "black",
+    text_cex = 1,
+    line_width = 1
+  ) +
+  annotate( #Añadir SRC
+    "text",
+    x = Inf, y = -Inf, 
+    label = paste("SRC:", st_crs(teru)$input),
+    hjust = 1.1, 
+    vjust = -0.55, 
+    size = 4,
+    color = "black",
+    fontface = "italic"
+  ) +
+  labs(title = "Parcelas con mayor potencial\nde crecimiento anual de matorral") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 28, hjust = 0.5, face = "bold",lineheight = 1.2),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title =element_text(size = 16),
+    legend.box = "vertical",
+    legend.spacing.y = unit(0.3, "cm"),
+    plot.caption = element_text(hjust = 0.5, size = 9, color = "gray40"),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 12),
+    axis.ticks = element_blank()  
+  ) +
+  coord_sf(clip = "off") 
+
+plot(mapa_principal)
+
+#Hacer un histograma para interpretar mejor los resultados
+histograma <-ggplot(puntos_altos, aes(x = categoria)) +
+  geom_bar(fill = color, color = "black", alpha = 0.8) + 
+  labs(
+    title = "Distribución del\ncrecimiento\nanual del matorral",
+    x = "Combustible (kg/m²·año)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    axis.title.x = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.y = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+plot(histograma)
+
+#Unir el mapa y el histograma
+mapa_final <- mapa_principal + 
+  inset_element(histograma, 
+                left = 0.7,   
+                bottom = 0.08,
+                right = 1, 
+                top = 0.4)
+#Ver el resultado
+mapa_final
+
+
+#Guardar el archivo con las parcelas representadas en el mapa 
+st_write(puntos_altos, paste0(csvInv, "parce_matoAlta.shp"), delete_dsn = TRUE)
+
+puntos_altos_csv <- cbind(
+  st_drop_geometry(puntos_altos),
+  st_coordinates(puntos_altos) 
+)
+
+#Guardarlo en csv2
+write_excel_csv2(puntos_altos_csv, paste0(csvInv, "parce_matoAlta.csv"))
