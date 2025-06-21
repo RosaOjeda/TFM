@@ -1,0 +1,432 @@
+
+#Este código sirve para comparar la cantidad de regenerado en las parcelas
+
+
+
+
+############ BIOMASA DE PIES MENORES DEL IFN4 ################################
+
+#Ruta a tablas en csv
+#Previamente se ha comprobado abriendo el archivo en txt que el separador de las
+#columnas es ; y el decimal es , 
+#Los separadores y decimales son los mismos en todas las tablas.
+
+
+csvbdd <- "D:/TFMT/IFN4_Teruel/tablas_bdd/"
+
+library(openxlsx)
+
+Regenera <- read.csv2(paste0(csvbdd, "tPCRegenera.csv"),
+                      stringsAsFactors = FALSE)
+str(Regenera)
+
+
+
+library(tidyverse)
+#Seleccionar las parcelas que hay en la capa shp, hay algunas para las que no 
+#hay datos, por eso salen solo 283 parcelas.
+regenerado <- Regenera %>%
+  filter(Estadillo %in% centros$Estadillo)
+
+
+#Seleccionar las columnas de interés y pasar la altura media del regenerado a m
+rege <- regenerado %>% 
+  select(-c(Provincia, Cla, Subclase)) %>%
+  mutate(Hm = Hm / 10)
+
+#Listar las especies de las que hay regenerado con pies menores CatDes = 4
+especies_4 <- rege %>%
+  filter(CatDes == 4) %>%
+  distinct(Especie) %>%
+  arrange(Especie) %>%
+  pull(Especie)
+
+
+#Ver el listado
+print(especies_4)
+
+#Contar el número de pies para los que hay ecuaciones alométricas
+especies_rege <- rege %>%
+  filter(CatDes == 4, Especie %in% c(
+    21, 24, 25, 26, 37, 38, 39, 43, 44, 45, 258)) %>%
+  group_by(Especie) %>%
+  summarise(
+    NumPies = n() 
+  ) %>%
+  arrange(Especie)
+
+print(especies_rege)
+
+piesEc <- especies_rege %>%
+  summarise(piesEc = sum(NumPies, na.rm = TRUE)) %>% 
+  pull(piesEc)
+print(piesEc)
+
+#322 pies menores hay ecuación
+
+
+
+#Hay muchas especies para las que no hay ecuación ni otra
+#que se le parezca
+
+spFaltan <- c(12, 65, 68, 95, 215, 237, 257, 276, 378)
+
+
+#Contar los pies menores para los que no hay ecuaciones
+piesMenoFaltan <- rege %>%
+  filter(CatDes == 4, Especie %in% spFaltan) %>%
+  group_by(Especie) %>%
+  summarise(
+    NumPies = n() 
+  ) %>%
+  arrange(Especie) 
+
+#Ver resultados
+print(piesMenoFaltan)
+#47 pies menores no tienen ecuación, el 12,73%
+
+
+#Para calcular la biomasa se utiliza la ecuación como si fuesen ramas medianas,
+#Se asume un Dn = 5 cm que es la clase diamétrica de CatDes.
+#Cada cálculo se multiplica por el número de pies menores.
+
+
+
+biomRege <- rege %>%  #El resultado son kg de biomasa por total de pies menores
+  #de cada especie
+  mutate(
+    regekg = ifelse(CatDes == 4, 
+                    case_when(
+                      Especie == 21 ~ 0.0295 * 5^2.742 * Hm^(-0.899) * NumPies,
+                      Especie == 22 ~ 0.0379 * 5^2 * NumPies, #Ramas pequeñas y acículas
+                      Especie == 24 ~ (4.257 + 0.00506 * 5^2 * Hm - 0.0722 * 5 * Hm) * NumPies,
+                      Especie == 25 ~ 0.0521 * 5^2 * NumPies,
+                      Especie == 26 ~ 0.000381 * 5^3.141 * NumPies, 
+                      Especie == 37 | Especie == 38 | Especie == 39 ~ 0.00792 * 5^2 * Hm * NumPies,
+                      Especie == 43 ~ (-0.0260 * 5^2 + 0.536 * Hm + 0.00538 * 5^2 * Hm) * NumPies,
+                      Especie == 44 ~ (0.127 * 5^2 - 0.00598 * 5^2 * Hm) * NumPies,
+                      Especie == 45 ~ 0.0898 * 5^2 * NumPies,
+                      Especie == 55 ~ 0.0925 * 5^2 * NumPies,
+                      Especie == 58 | Especie == 258 ~ 0.0385 * 5^2 * NumPies,
+                      TRUE ~ NA_real_
+                    ),
+                    NA_real_)
+  )
+
+#Suma del total de toneladas de pies menores
+print(sum(biomRege$regekg / 1000, na.rm = TRUE))
+#Sale 2.724947 Tm
+
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+write_excel_csv2(biomRege, paste0(csvInv, "biomArb_regeIFN4.csv"))
+
+
+#Calcular la cantidad de regenerado por parcela y por m2
+biomRege_est <- biomRege %>% #El resultado es kg de biomasa por m2 en la parcela
+  #de 5 m de radio donde se miran los pies menores
+  group_by(Estadillo) %>%
+  summarise(
+    BiomRege = sum(regekg, na.rm = TRUE),
+    Hm_rege = mean(Hm, na.rm = TRUE)
+  ) %>%
+  mutate( #Calcular la biomasa por m2
+    regekg_m2 = BiomRege / (pi * 5^2),
+    Hm_mean = Hm_rege# Área = π * r² (r = 5m) = 78.53982 m²
+  ) %>%  #Unir los resultados en un solo df
+  mutate(across(everything(), ~ replace_na(., 0)))
+
+#Ver el resultado
+head(biomRege_est)
+
+#Guardar el resultado
+write_excel_csv2(biomRege_est, paste0(csvInv, "biomArb_menoresIFN4.csv"))
+
+
+################### HACER UNA CLASIFICACIÓN CATEGÓRICA DEL REGENERADO #########
+
+
+library(sf)
+shp <- "D:/TFMT/cartoTeru/coord_parcelas/"
+
+
+centros <- st_read(paste0(shp, "centrosMC.shp"))
+
+#Unir datos regenerado y geometría
+
+dist_rege <- centros %>% 
+  full_join(biomRege_est, by = "Estadillo") %>% 
+  mutate(across(everything(), ~ replace_na(., 0)))
+
+class(dist_rege)
+
+#Contar el número de parcelas que tienen valor 0 en BiomRege
+num_ceros <- sum(dist_rege$BiomRege == 0, na.rm = TRUE)
+print(num_ceros)
+#Salen 94 parcelas con 0 regenerado y 204 con regenerado
+
+HmediaRege <- sum(dist_rege$Hm_rege / 204, na.rm = TRUE)
+print(HmediaRege)
+#Sale 3.128701 m de altura media
+
+supRege <- (298-94) * 78.53982
+print(supRege)
+#Salen 16022.12 m² de superficie total cubierta por el regenerado
+
+totalBiomRege <- sum(dist_rege$BiomRege, na.rm = TRUE)
+print(totalBiomRege)
+#Salen 2724.947 kg de regenerado en las 204 parcelas que tienen
+
+#Calcular la cantidad de regenerado por m2
+mediaRege <- 2724.947 / 16022.12
+print(mediaRege)
+#Sale 0.1700741 kg/m² de media de regenerado en las 204 que tienen 
+
+
+library(ggspatial)
+
+
+#Ver en un histograma las cantidad de regenerado en las parcelas
+ggplot(dist_rege, aes(x = regekg_m2)) +
+  geom_histogram(
+    bins = 30,              
+    fill = "#229954",   
+    color = "white",     
+    alpha = 0.8       
+  ) +
+  labs(
+    title = "Distribución de la biomasa del regenerado en las parcelas",
+    x = "Biomasa parcela (kg/m²)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#Según el histograma de biomasa se decide seleccionar solo las parcelas que tienen 0,1 kg/m2
+
+regeAlto <- dist_rege %>%
+  filter(regekg_m2 >= 0.1)
+
+#Salen 85 parcelas con regenerado mayor a 0,1 kg/m2
+
+
+ggplot(regeAlto, aes(x = Hm_mean)) +
+  geom_histogram(
+    bins = 30,        
+    fill = "#85c1e9",  
+    color = "white",   
+    alpha = 0.8        
+  ) +
+  labs(
+    title = "Distribución de la altura del regenerado en las parcelas",
+    x = "Altura media (m))",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+
+#Según el histograma de altura la altúra mínima de las parcelas con mucha biomasa es de 1,8 m
+
+
+#Se hace una clasificación en menor de 3 y mayor de 3 m.
+
+#Cargar la capa con la silueta de la provincia
+rutaTeru <- "D:/TFMT/cartoTeru/provTeru/"
+
+teru <- st_read(paste0(rutaTeru, "ogr_1737345219701.shp"))
+
+#Clasificar las parcelas en función de la cantidad de regenerado
+regeAlto <- regeAlto %>%
+  mutate(
+    categoria = case_when(
+      regekg_m2 >= 0.1 & regekg_m2 < 0.3 ~ "0.1 - 0.3",
+      regekg_m2 >= 0.3 & regekg_m2 < 0.5 ~ "0.3 - 0.5",
+      regekg_m2 >= 0.5 ~ "> 0.5"
+    ),
+    categoria = factor( #Convertir a factor para mantener el orden establecio
+      categoria,
+      levels = c("0.1 - 0.3", "0.3 - 0.5", "> 0.5"),
+      ordered = TRUE #Indicar que se ordene como se ha dicho
+    )
+  )
+
+#Clasificar las parcelas en función de la altura del regenerado.
+regeAltoH <- regeAlto %>%
+  mutate(
+    categoria2 = case_when(
+      Hm_mean < 3 & Hm_mean < 3 ~ "< 3",
+      Hm_mean >= 3 ~ ">= 3"
+    ),
+    categoria2 = factor(
+      categoria2,
+      levels = c("< 3", ">= 3"), 
+      ordered = TRUE 
+    )
+  )
+
+#Combinar las dos clasificaciones en un solo df
+regeAltoH <- regeAltoH %>%
+  mutate(
+    cont_V = case_when(
+      categoria == "0.1 - 0.3" & categoria2 == "< 3" ~ 1, 
+      categoria == "0.3 - 0.5" & categoria2 == "< 3" ~ 2,
+      categoria == "0.1 - 0.3" & categoria2 == ">= 3" ~ 3,
+      categoria == "0.3 - 0.5" & categoria2 == ">= 3" ~ 4,
+      categoria == "> 0.5" & categoria2 == "< 3" ~ 5,
+      categoria == "> 0.5" & categoria2 == ">= 3" ~ 6,
+      TRUE ~ NA_integer_
+    )
+  )
+
+
+
+################## MAPA CON LAS PARCELAS QUE TIENEN MÁS REGENERADO ###########
+regeAltoH <- regeAltoH %>%
+  mutate(cont_V = as.factor(cont_V)) #Convertir en factor para representar las categorías
+
+#Hacer una paleta de colores
+color <- c(
+  "1" = "#f9e79f",
+  "2" = "#f5b041",
+  "3" = "#dc7633",
+  "4" = "#d7191c",
+  "5" = "#943126",
+  "6" = "#76448a"
+)
+
+
+library(patchwork)
+
+mapa_principal <- ggplot() +
+  #Silueta de la provincia
+  geom_sf(data = teru, fill = NA, color = "#000000", linewidth = 0.5) +
+  geom_sf(           #Puntos 
+    data = regeAltoH,
+    aes(
+      fill = cont_V,  #Asignar colores
+      size = cont_V   #Asignar tamaños
+    ),
+    shape = 21,      
+    color = "black",   
+    stroke = 0.3, 
+    alpha = 0.8     
+  ) + 
+  scale_fill_manual( #Escala de colores
+    name = "LEYENDA:",
+    values = color,
+    labels = c("1: Carga baja, Hm < 3 m", "2: Carga media, Hm < 3 m",
+               "3: Carga alta, Hm < 3 m", "4: Carga baja, Hm > 3 m", 
+               "5: Carga media, Hm > 3 m", "6: Carga alta, Hm > 3 m"),
+    drop = FALSE,
+    guide = guide_legend(
+      nrow = 6,  #Poner la escala en dos filas
+      byrow = TRUE,
+      override.aes = list( #Ocultar la escala
+        shape = NA,  
+        size = 0,  
+        color = NA  
+      )
+    )
+  ) +
+  scale_size_manual(  #Escala de tamaños
+    name = "Nivel de continuidad vertical:",
+    values = c(3, 4, 5, 6, 7, 8),  #Definir tamaños de la escala
+    labels = c("1", "2", "3", "4", "5", "6"),
+    guide = guide_legend(
+      nrow = 1,  #Poner la escala de tamaño en una sola fila
+      override.aes = list(shape = 21, fill = color), 
+      order = 2   #Poner los puntos y los colores del mapa en la escala
+    )
+  ) +
+  geom_sf(
+    data = regeAltoH,
+    aes(
+      fill = NULL,  
+      size = cont_V   
+    ),
+    shape = 21,       
+    color = "black",  
+    stroke = 0.3,    
+    alpha = 0.8   
+  ) +
+  annotation_north_arrow( #Rosa de los vientos
+    location = "tr",
+    which_north = "true",
+    style = north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    ),
+    pad_x = unit(0.4, "cm"),
+    pad_y = unit(0.4, "cm")
+  ) +
+  annotation_scale( #Escala gráfica
+    location = "bl",
+    width_hint = 0.25,
+    bar_cols = c("black", "white"),
+    text_col = "black",
+    text_cex = 1,
+    line_width = 1
+  ) +
+  annotate( #Añadir SRC
+    "text",
+    x = Inf, y = -Inf,
+    label = paste("SRC:", st_crs(teru)$input),
+    hjust = 1.1,
+    vjust = -0.55,
+    size = 4,
+    color = "black",
+    fontface = "italic"
+  ) +
+  labs(
+    title = "Niveles de continuidad vertical del regenerado",
+    subtitle = "Combinación de carga de combustible y altura de los pies menores"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 28, hjust = -0.25, face = "bold", lineheight = 1.2),
+    plot.subtitle = element_text(size = 18, hjust = -1),
+    legend.position = "right",
+    legend.text = element_text(size = 16),
+    legend.title =element_text(size = 16, face = "bold"),
+    legend.box = "vertical",
+    legend.spacing.y = unit(0.3, "cm"),
+    plot.caption = element_text(hjust = 0.5, size = 9, color = "gray40"),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 12),
+    axis.ticks = element_blank()
+  ) +
+  coord_sf(clip = "off")
+
+plot(mapa_principal)
+
+#Hacer un histograma de los valores para interpretar mejor el mapa
+histograma <-ggplot(regeAltoH, aes(x = cont_V)) +
+  geom_bar(fill = color, color = "black", alpha = 0.8) +
+  labs(
+    title = "Distribución niveles\ncontinuidad vertical",
+    x = "Niveles",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    axis.title.x = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.y = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+plot(histograma)
+
+#Unir el mapa y el histograma
+mapa_final <- mapa_principal + 
+  inset_element(histograma, 
+                left = 0.7, 
+                bottom = 0.08, 
+                right = 1, 
+                top = 0.4)
+
+#Ver el resultado
+mapa_final
+
+
