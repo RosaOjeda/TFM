@@ -1,0 +1,291 @@
+
+#Este código sirve para sacar las métricas LiDAR de diferencia de altura entre primer y último retorno 
+#y la métrica de densidad de puntos
+
+################# TODO HAY QUE REPETIRLO PARA LAS 3 COBERTURAS ############################
+
+library(openxlsx)
+
+#Abrir ruta a los arhcivos
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+
+library(tidyverse)
+
+#Abrir los datos con las estadísticas de las parcelas
+biom_parce <- read.csv2(paste0(csvInv, "biomArb_m2Est_act.csv"))
+biom_parce3 <- read.csv2(paste0(csvInv, "biomArb_m2EstIFN3_act.csv"))
+
+sup_ifn4 <- biom_parce %>%
+  select(Estadillo, superf)
+
+sup_ifn3 <- biom_parce3 %>%
+  select(Estadillo, superf)
+
+
+#Ruta a los archivos LiDAR
+#Repetir para las 3 coberturas
+ruta <- "D:/TFMT/recN3c/recrec/"
+
+library(lidR)
+
+#Hacer un catálogo
+#Repetir para las 3 coberturas
+ctg <- readLAScatalog(ruta, pattern = "*.laz", full.names = TRUE, 
+                          filter = "-drop_withheld -drop_z_below 0")
+
+summary(ctg)
+
+#Reproyectar el catálogo
+#Repetir para las 3 coberturas
+lidR::projection(ctg) <- 25830
+
+parcela<- readLAS("D:/TFMT/recN3c/recrec/parcela_581.laz")
+
+plot(parcela, color = "Z", size = 3, bg = "white", axis = TRUE, legend = TRUE)
+plot(parcela, color = "RGB", size = 3, bg = "white", axis = TRUE, legend = TRUE)
+
+
+
+library(purrr)
+
+library(stringr)
+
+calcular_difA <- function(las_file) {
+  #Extraer número de estadillo del nombre del archivo
+  estadillo <- as.integer(str_extract(basename(las_file), "\\d+"))
+  
+  #Leer el archivo LAZ filtrando sobre 2 m
+  las <- readLAS(las_file, filter = "-keep_z_above 2 -keep_first -keep_last")
+  
+  #Verificar si hay archivos vacíos y hacer un df 
+  if (npoints(las) == 0) { 
+    return(data.frame(
+      Estadillo = estadillo,
+      media_primer_retorno = NA_real_,
+      media_ultimo_retorno = NA_real_,
+      diferencia_media = NA_real_,
+      n_pares_validos = 0L,
+      archivo = basename(las_file),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  #Obtener los datos como data.table
+  dt <- las@data
+  
+  #Filtrar los primeros y últimos retornos
+  dt_filtrado <- dt[ReturnNumber == 1 | ReturnNumber == NumberOfReturns,]
+  
+  #Calcular las medias
+  medias <- dt_filtrado %>%
+    group_by(ReturnNumber) %>%
+    summarise(
+      media_altura = mean(Z),
+      .groups = 'drop'
+    )
+  
+  ret1 <- medias %>% filter(ReturnNumber == 1) %>% pull(media_altura)
+  retU <- medias %>% filter(ReturnNumber == max(ReturnNumber)) %>% pull(media_altura)
+  
+  #Contar pares de retornos
+  n_pares <- nrow(dt[ReturnNumber == 1 & NumberOfReturns == max(NumberOfReturns)])
+  
+  #Guardar los resultados en un df
+  data.frame(
+    Estadillo = estadillo,
+    media_primer_retorno = ifelse(length(ret1) > 0, ret1, NA_real_),
+    media_ultimo_retorno = ifelse(length(retU) > 0, retU, NA_real_),
+    diferencia_media = ifelse(length(ret1) > 0 & length(retU) > 0, ret1 - retU, NA_real_),
+    n_pares_validos = n_pares,
+    archivo = basename(las_file),
+    stringsAsFactors = FALSE
+  )
+}
+
+procesar_catalogo <- function(ruta) {
+  #Listar los archivos laz
+  laz_files <- list.files(ruta, pattern = "\\.laz$", full.names = TRUE, ignore.case = TRUE)
+  
+  #Procesar los archivos devolviendo errores
+  resultados <- lapply(laz_files, function(x) {
+    tryCatch(
+      calcular_difA(x),
+      error = function(e) {
+        message("Error procesando ", basename(x), ": ", e$message)
+        return(NULL)
+      }
+    )
+  })
+  
+  #Unir los resultados
+  bind_rows(compact(resultados)) %>% 
+    arrange(Estadillo)
+}
+
+
+procesar_archivo <- function(las, nombre_archivo) {
+  #Extraer número de Estadillo del nombre del archivo
+  estadillo <- as.integer(gsub("parcela_|_v.*", "", nombre_archivo))
+  
+  #Filtrar retornos sobre 2 m
+  las_filtrado <- filter_poi(las, Z > 2)
+  
+  if (is.empty(las_filtrado)) {
+    message("Archivo ", nombre_archivo, ": No hay retornos > 2m")
+    return(list(
+      metricas_retornos = data.frame(Estadillo = estadillo, tipo_retorno = NA, media_altura = NA, n_retornos = 0),
+      diferencia = data.frame(Estadillo = estadillo, difA = NA)
+    ))
+  }
+  
+  #Calcular métricas de cada retorno
+  stats <- las_filtrado@data %>%
+    group_by(ReturnNumber) %>%
+    summarise(
+      media_altura = mean(Z),
+      n_retornos = n(),
+      .groups = 'drop'
+    )
+  
+  #Comprobar el número de retornos 
+  retornos_presentes <- unique(stats$ReturnNumber)
+  ret1 <- stats %>% filter(ReturnNumber == 1)
+  retU <- stats %>% filter(ReturnNumber == max(retornos_presentes))
+  
+  #Hacer un df para los resultados
+  metricas <- bind_rows(
+    ret1 %>% mutate(tipo_retorno = "primer_retorno"),
+    retU %>% mutate(tipo_retorno = "ultimo_retorno")
+  ) %>%
+    mutate(Estadillo = estadillo) %>%
+    select(Estadillo, tipo_retorno, media_altura, n_retornos)
+  
+  #Calcular diferencia de altura solo si existen ambos retornos
+  if (nrow(ret1) > 0 && nrow(retU) > 0) {
+    diferencia <- data.frame(
+      Estadillo = estadillo,
+      difA = abs(ret1$media_altura - retU$media_altura)
+    )
+  } else {
+    message(
+      "Archivo ", nombre_archivo, 
+      ": Faltan primer (", nrow(ret1), ") o último retorno (", nrow(retU), ")")
+    diferencia <- data.frame(Estadillo = estadillo, difA = NA)
+  }
+  
+  return(list(metricas_retornos = metricas, diferencia = diferencia))
+}
+
+#Procesar todo el catálogo
+resultados_seguros <- catalog_apply(ctg, function(chunk) {
+  tryCatch({
+    las <- readLAS(chunk)
+    if (is.empty(las)) return(NULL)
+    
+    nombre_archivo <- tools::file_path_sans_ext(basename(chunk@files))
+    procesar_archivo(las, nombre_archivo)
+  }, error = function(e) {
+    message("Error procesando ", chunk@files, ": ", e$message)
+    return(NULL)
+  })
+})
+
+#Filtrar resultados correctos
+resultados_validos <- resultados_seguros[!sapply(resultados_seguros, is.null)]
+
+metricas_retornos <- map_dfr(resultados_validos, ~ .x$metricas_retornos)
+diferencias <- map_dfr(resultados_validos, ~ .x$diferencia)
+
+#Extraer los resultados
+estadillos_con_datos <- diferencias %>% 
+  filter(!is.na(difA)) %>% 
+  pull(Estadillo) %>% 
+  unique()
+
+cat("\nEstadillos con diferencias calculadas:", 
+    length(estadillos_con_datos), "/", length(resultados_seguros), "\n")
+
+#Resumen de los resultados
+resumen_diferencias <- diferencias %>%
+  summarise(
+    n_estadillos = n(),
+    n_con_datos = sum(!is.na(difA)),
+    media_diferencia = mean(difA, na.rm = TRUE),
+    sd_diferencia = sd(difA, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+glimpse(resumen_diferencias)
+
+
+#Esto hay que hacerlo también para ifn3
+dif_1oUlt <- sup_ifn4 %>%
+  left_join(diferencias %>%
+              select(Estadillo, difA), by = "Estadillo")
+
+#Guardar el resultado
+write_excel_csv2(dif_1oUlt, paste0(csvInv, "dif_1oUlt.csv"))
+
+
+
+archivos <- list.files(ruta, pattern = "\\.laz$", full.names = TRUE)
+
+calcular_densidades <- function(archivo) {
+  las <- readLAS(archivo)
+  
+  # Corrección 1: Verificar si el archivo está vacío
+  if (npoints(las) == 0) {
+    cat("Archivo vacío:", basename(archivo), "\n")
+    return(NULL)
+  }
+  
+  estadillo <- gsub("parcela_|\\.laz", "", basename(archivo))
+  area <- sup_ifn4$superf[sup_ifn4$Estadillo == estadillo]
+  
+  # Corrección 2: Verificar si se encontró el área
+  if (length(area) == 0) {
+    cat("Estadillo no encontrado en stParce:", estadillo, "\n")
+    return(NULL)
+  }
+  
+  area_parcela <- area  # m²
+  
+  # --- Densidad TOTAL ---
+  n_total <- npoints(las)
+  dens_total <- n_total / area_parcela
+  
+  las_z2 <- filter_poi(las, Z >= 2)
+  n_total_z2 <- npoints(las_z2)
+  densRet_sb2 <- n_total_z2 / area_parcela
+  percRet_sb2 <- (n_total_z2 / n_total) * 100
+  
+  # --- Densidad PRIMEROS retornos ---
+  primeros <- filter_poi(las, ReturnNumber == 1)
+  n_primeros <- npoints(primeros)
+  dens_prim <- n_primeros / area_parcela
+  
+  primeros_z2 <- filter_poi(primeros, Z >= 2)
+  n_primeros_z2 <- npoints(primeros_z2)
+  dens_1Ret_sb2 <- n_primeros_z2 / area_parcela
+  perc_1Ret_sb2 <- (n_primeros_z2 / n_primeros) * 100
+  
+  data.frame(
+    Estadillo = estadillo,
+    dens_prim = dens_prim,
+    percRet_sb2 = percRet_sb2,
+    perc_1Ret_sb2 = perc_1Ret_sb2
+  )
+}
+
+# Procesar archivos
+resultados <- lapply(archivos, calcular_densidades)
+df_densidades <- do.call(rbind, resultados[!sapply(resultados, is.null)])
+
+
+# 5. Guardar
+write_excel_csv2(df_densidades, paste0(csvInv, "met_dens_ret_cob3.csv"))
+
+# Mostrar
+head(df_densidades)
+
