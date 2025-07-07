@@ -126,12 +126,12 @@ print(sp_mat, n = 25)
 #publicaciones-de-desarrollo-rural/librobiomasadigital_tcm30-538563.pdf 
 
 #Cambiar 12 x 111; 17 x 170; 22 x 213-214; 23 x 232; 24 x 248 y 249; 25 x 221-222; 
-# 27 x 101; 21 x 261-262-263; 
-# 26 x 250 a 256; 28 x 281-282
+#27 x 101; 21 x 261-262-263; 
+#26 x 250 a 256; 28 x 281-282
 
-# 11 x 113 no hay. No se calcula porque está solo en 1 parcela como ForMat2
-# 21 x 261-262-263. No hay. son 7-10-1 formaciones.
-# 28 x 281-282. No hay. son 2-1 formaciones
+#11 x 113 no hay. No se calcula porque está solo en 1 parcela como ForMat2
+#21 x 261-262-263. No hay. son 7-10-1 formaciones.
+#28 x 281-282. No hay. son 2-1 formaciones
 
 
 mato <- datos_mat %>%
@@ -165,13 +165,13 @@ mato <- datos_mat %>%
 
 
 #Estas son las ecuaciones y los parámetros que hay que poner para cada especie
-# 12: W (tn ha-1)=a1 • Hm arcoseno √(FCC/100) ; a1 0,6441192
-# 16: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 0,8170986; b1 1,2403275
-# 17: W (tn ha-1)=a1 • [Hmb1 • arcoseno (√(FCC/100)]b2; a1 2,0135328; b1 0,8191936; b2 0,9125035
-# 23: W (tn ha-1)=a1 • [Hmb1 • arcoseno (√(FCC/100)]b2; a1 9,018966; b1 0,329990; b2 0,419907
-# 24: W (tn ha-1)=a1 • Hmb1 • arcoseno (√(FCC/100)b2; a1 1,4901824; b1 0,988850; b2 1,0275925
-# 25: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,7397887; b1 0,884211
-# 26: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,378164; b1 0,999194
+#12: W (tn ha-1)=a1 • Hm arcoseno √(FCC/100) ; a1 0,6441192
+#16: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 0,8170986; b1 1,2403275
+#17: W (tn ha-1)=a1 • [Hmb1 • arcoseno (√(FCC/100)]b2; a1 2,0135328; b1 0,8191936; b2 0,9125035
+#23: W (tn ha-1)=a1 • [Hmb1 • arcoseno (√(FCC/100)]b2; a1 9,018966; b1 0,329990; b2 0,419907
+#24: W (tn ha-1)=a1 • Hmb1 • arcoseno (√(FCC/100)b2; a1 1,4901824; b1 0,988850; b2 1,0275925
+#25: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,7397887; b1 0,884211
+#26: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,378164; b1 0,999194
 #27: W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1; a1 1,7222769; b1 0,7768124
 #22; W (tn ha-1)=a1 • [Hm arcoseno (√(FCC/100)]b1
 
@@ -304,9 +304,14 @@ totalBiomMato <- sum(matoTodo$kg_mat_parcelas, na.rm = TRUE)
 print(totalBiomMato) #El resultado es 16330.21 kg biomasa en el total de las parcelas
 #El total de superficie con matorral es 51266.87 m2
 
+#Porcentaje del matorral respecto al arbolado, Sale 1688309 kg arbolado en IFN4
+
+print(porcMat <- 16330.21 / 1688309)
+
 #Calcular la cantidad media de matorral por m2 en las parcelas
 print(mat_m2 <- 16330.21 / 51266.87)
 #Sale 0,32 kg/m2 de media de biomasa de matorral
+
 
 
 ################ INCREMENTO ANUAL ESTIMADO DEL MATORRAL ####################
@@ -647,7 +652,7 @@ puntos_altos <- puntos_altos %>%
   )
 
 
-library(ggspatial)  # Para elementos cartográficos
+library(ggspatial)  
 
 #Hacer una paleta de colores para el mapa
 color <- c("0.05 - 0.075" = "#f4d03f",
