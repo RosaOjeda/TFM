@@ -1,0 +1,372 @@
+
+#Este código sirve para hacer el modelo de la altura de la vegetación con datos
+#LiDAR de la 3ª cobertura validados con datos de campo de IFN4
+
+
+##################### PREPARAR LOS DATOS DE CAMPO ####################
+library(openxlsx)
+
+#Ruta a los datos de campo
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+#Abrir el archivo con las estadísticas de las parcelas
+datos <- read.csv2(paste0(csvInv, "stParce_red.csv"))
+
+#Ver las carterísticas de la columna Ht
+summary(datos$media_Ht)
+sd(datos$media_Ht)
+
+
+####### HACER UN CATÁLOGO PARA EXRAER LAS MÉTRICAS DE Ht #####################
+
+#Ruta a los archivos laz ya recortados
+ruta <- "D:/TFMT/recN3c/recrec/"
+
+library(lidR)
+
+#Hacer el catálogo
+ctgHt <- readLAScatalog(ruta, pattern = "*.laz", full.names = TRUE, 
+                        filter = "-drop_withheld -drop_z_below 0")
+
+summary(ctgHt)
+
+#Reproyectar el catálogo
+lidR::projection(ctgHt) <- 25830
+
+#Ver el aspecto de las parcelas
+parcela<- readLAS("D:/TFMT/recN3c/recrec/parcela_53.laz")
+
+plot(parcela, color = "Z", size = 3, bg = "white", axis = TRUE, legend = TRUE)
+plot(parcela, color = "RGB", size = 3, bg = "white", axis = TRUE, legend = TRUE)
+
+
+
+####### CALCULAR LAS MÉTRICAS DE Ht PARA HACER EL MODELO #####################
+library(stringr)
+library(purrr)
+
+#Se calcula en base a percentiles 75, 90, 95 y 98 de primeros y segundos retornos sobre 2 m.
+
+#Función para calcular percentiles por tipo de retorno
+
+calcular_percentiles <- function(las) {
+  primeros2 <- filter_poi(las, ReturnNumber == 1L & Z > 2)
+  segundos2 <- filter_poi(las, ReturnNumber == 2L & Z > 2)
+  total_1ret <- npoints(filter_poi(las, ReturnNumber == 1L))
+
+calcular_p <- function(z_points) {
+    if (length(z_points) > 0) {
+      quantile(z_points, probs = c(0.75, 0.9, 0.95, 0.98), na.rm = TRUE)
+    } else {
+      c("75%" = NA, "90%" = NA, "95%" = NA, "98%" = NA)
+    }
+  }
+  
+  #Calcular los percentiles
+  p_primeros2 <- calcular_p(primeros2$Z)
+  p_segundos2 <- calcular_p(segundos2$Z)
+  
+  #Calcular las métricas
+  total_above_2m <- npoints(primeros2)
+  perc_above_2m <- if (total_1ret > 0) 100 * total_above_2m / total_1ret else NA_real_
+  
+  #Hacer un df para guardar los resulados
+  data.frame(
+    #Primeros retornos 2 m
+    p75_1ret2 = as.numeric(p_primeros2["75%"]),
+    p90_1ret2 = as.numeric(p_primeros2["90%"]),
+    p95_1ret2 = as.numeric(p_primeros2["95%"]),
+    p98_1ret2 = as.numeric(p_primeros2["98%"]),
+    n_1ret2 = npoints(primeros2),
+    
+    #Segundos retornos 2m 
+    p75_2ret2 = as.numeric(p_segundos2["75%"]),
+    p90_2ret2 = as.numeric(p_segundos2["90%"]),
+    p95_2ret2 = as.numeric(p_segundos2["95%"]),
+    p98_2ret2 = as.numeric(p_segundos2["98%"]),
+    n_2ret2 = npoints(segundos2),
+
+   
+    #Total y porcentaje
+    total_1ret = total_1ret,
+    perc_sb_2m = perc_above_2m,
+    stringsAsFactors = FALSE
+  )
+}
+
+#Aplicar las métricas al catálogo
+resultados <- catalog_apply(ctgHt, function(chunk) {
+  las <- readLAS(chunk)
+  
+  #Devolver NULL si no hay puntos en el archivo
+  if (npoints(las) == 0) return(NULL)  
+  
+  #Obtener los números del estadillo
+  estadillo <- tools::file_path_sans_ext(basename(chunk@files))
+  estadillo <- as.integer(gsub("parcela_", "", estadillo))
+  
+  #Calcular las métricas y añadirlas al df
+  cbind(
+    Estadillo = estadillo,
+    calcular_percentiles(las)
+  )
+}) %>% 
+  bind_rows() %>% 
+  arrange(Estadillo)
+
+#Verlos resultados
+glimpse(resultados)
+
+
+############### HACER EL MODELO DE LA ALTURA DEL DOSEL ################
+
+datos_campo <- datos %>%
+  select(Estadillo, media_Ht)
+
+#Unir con las metricas
+metcampo <- merge(datos_campo, resultados, by = "Estadillo")
+
+summary(metcampo$media_Ht)
+
+bdd <- metcampo[-9, ] #Eliminar esta parcela que es la del estadillo que no tiene vegetación
+
+library(janitor)
+#Especificar la variable dependiente y las independientes.
+vbles <- dplyr::select(bdd, "media_Ht", 3:length(names(bdd))) %>%
+  remove_constant()
+
+summary(vbles$media_Ht)
+
+cor(vbles)[,1]
+
+#Hacer la transformación logarítmica a todas las variables
+vbles_log <- log(vbles + 0.001) 
+
+cor(vbles_log)[,1]
+
+library(fuzzySim)
+vbles80 <- corSelect(
+  vbles_log, sp.cols = 1, var.cols = 2:13, cor.thresh = 0.8)
+
+df_vbles80 <- dplyr::select(vbles_log, "media_Ht", vbles80$selected.vars)
+
+
+modelo_1 <- lm(media_Ht ~., data = df_vbles80)
+
+#Ver el grado de significancia de cada variable en el modelo
+summary(modelo_1) #Multiple R-squared:  0.8158,	Adjusted R-squared:  0.8146
+
+library(car)
+vif(modelo_1) #Salen muy altas
+
+library(performance)
+check_collinearity(modelo_1) #Sale correlación alta con n_2ret2 y moderada con total_1ret
+check_heteroscedasticity(modelo_1) #Sale homocedástico (p = 0.145) 
+plot(modelo_1, which = 1, col = c("blue")) #Residuals vs Fitted
+#Aparecen marcadas las parcelas de las líneas 298, 143 y 276
+
+plot(modelo_1, which = 2, col = c("blue")) #QQ Residuals
+#Aparecen marcadas las parcelas de las líneas 298, 143 y 276
+
+#Reducción de variables por stepwise
+library(olsrr) 
+sr_lm <- ols_step_both_p(modelo_1, pent=0.05, prem=0.05)
+print(sr_lm)
+
+#Otras comprobaciones de normalidad de los residuos del modelo_1
+check_normality(modelo_1)  #los residuos NO tienen distribución normal
+#p-value = 0.002 < 0.05
+#Hipótesis nula (H0): los residuos siguen una distribución normal.
+#Hipótesis alternativa (H1): los residuos NO siguen una distribución normal.
+
+hist(modelo_1$residuals) #Hay una cola algo marcada hacia la izquierda
+
+shapiro.test(residuals(modelo_1)) #Los residuos NO son normales
+#W = 0.98409, p-value = 0.002229
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#W tiene que salir próximo a 1 
+
+ks.test(residuals(modelo_1), "pnorm") #Los residuos NO son normales
+#D = 0.35311, p-value < 2.2e-16
+#La máxima desviación (D) tiene un valor grande
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+
+library(nortest)
+ad.test(residuals(modelo_1)) #Los residuos NO son normales
+#A = 0.82748, p-value = 0.0324
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#El valor de A lejos de 1 indica una distribución normal
+
+check_outliers(modelo_1, method = "cook") #No hay outliers, método de Cook (0.8)
+
+plot(modelo_1, which = 5, col = c("blue")) #En el gráfico se destacan las 
+#parcelas de las líneas 73, 276 y 142, ninguna sale de la distancia de Cook
+#todas son parcelas con mucha variablidad en alturas.
+
+library(car)
+outlierTest(modelo_1) #Mirar los outliers con el test de Buonferroni
+#     rstudent unadjusted p-value Bonferroni p
+#276 -4.505963         9.5578e-06    0.0028387
+#La parcela de la línea 276 tiene una t-student muy alta, el umbral está en +-2,
+#Según Buonferroni es outlier
+#Hipótesis nula (H0): la parcela no es outlier si p > 0.05
+#Hipótesis alternativa (H1): la parcela es outlier si p < 0.05
+#Si Buonferroni da NA es que es > 1 
+
+#IMPORTANTE!!!!
+#Como ya había quitado la línea 9, para quitar la línea 276 hay que quitar la 275
+df_vbles80b <- df_vbles80[-275, ]
+
+modelo_1b <- lm(media_Ht ~ p90_2ret2 + perc_sb_2m, data = df_vbles80b)
+summary(modelo_1b) #Multiple R-squared:  0.8272,	Adjusted R-squared:  0.8261
+
+#No se puede hacer AIC ni ANOVA pq no tienen el mismo número de filas.
+
+check_heteroscedasticity(modelo_1b) #Sale homocedástico (p = 0.444)
+plot(modelo_1b, which = 1, col = c("blue"))
+plot(modelo_1b, which = 2, col = c("blue"))
+
+check_normality(modelo_1b) #Ahora los residuos sí son normales
+#p = 0.096 > 0.05
+#Hipótesis nula (H0): los residuos siguen una distribución normal.
+#Hipótesis alternativa (H1): los residuos NO siguen una distribución normal.
+
+hist(modelo_2b$residuals) #Desaparece la cola que había hacia la izquierda
+
+shapiro.test(residuals(modelo_1b)) #También salen residuos normales
+#W = 0.99165, p-value = 0.09267
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#W tiene que salir próximo a 1 
+
+ks.test(residuals(modelo_1b), "pnorm") #También salen residuos normales
+#D = 0.35484, p-value < 2.2e-16
+#La máxima desviación (D) tiene un valor grande
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+
+ad.test(residuals(modelo_1b)) #También salen residuos normales
+#A = 0.56125, p-value = 0.1456
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#El valor de A lejos de 1 indica una distribución normal
+
+check_outliers(modelo_1b, method = "cook") #No hay outliers, método de Cook (0.8)
+
+plot(modelo_1b, which = 5, col = c("blue")) #En el gráfico destacan las parcela
+#142, 73 y 212, pero ninguna sale de la línea de la distancia de Cook.
+
+
+outlierTest(modelo_1b) #Mirar los outliers con el test de Buonferroni
+#    rstudent unadjusted p-value Bonferroni p
+#298 3.534079         0.00047556      0.14077
+#La parcela de la línea 298 tiene una t-student muy alta, el umbral está en +-2,
+#Según Buonferroni NO es outlier
+#Hipótesis nula (H0): la parcela no es outlier si p > 0.05
+#Hipótesis alternativa (H1): la parcela es outlier si p < 0.05
+#Si Buonferroni da NA es que es > 1
+
+library(caret)
+valida <- trainControl(method = "cv", number = 10,
+                       savePredictions = TRUE) #Se hacen 10 particiones
+
+set.seed(220)
+#Entrenar el modelo_1b y validarlo
+modelo_cv <- train(media_Ht ~ p90_2ret2 + perc_sb_2m, data = df_vbles80b,
+                   method = "lm",
+                   trControl = valida)
+
+
+summary(modelo_cv) #Multiple R-squared:  0.8272,	Adjusted R-squared:  0.8261
+
+modelo_cv$results 
+
+#Estos son los resultados de validar el modelo_1b
+# intercept      RMSE  Rsquared       MAE     RMSESD RsquaredSD      MAESD
+#1      TRUE 0.1624931 0.8336432 0.1262903 0.02793676 0.05003978 0.0171655
+
+
+############### CALCULAR modelo_cv$results EN ESCALA ORIGINAL ########
+
+#Obtener las predicciones de cada partición -> HAY QUE GUARDARLAS EN VALIDA
+
+predicciones_cv <- modelo_cv$pred  #pred HAY QUE GUARDARLO EN VALIDA
+
+print(names(predicciones_cv))
+
+
+#Revertir la transformación logarítmica
+predicciones_cv <- predicciones_cv %>%
+  mutate(
+    pred_original = exp(pred) - 0.001,  #Estimaciones revertidas a escala original
+    obs_original = exp(obs) - 0.001      #Mediciones revertidas a escala original
+  )
+
+#Calcular los errores en cada partición
+metricas_parti <- predicciones_cv %>%
+  group_by(Resample) %>%
+  summarise(
+    RMSE = sqrt(mean((obs_original - pred_original)^2)),  
+    MAE = mean(abs(obs_original - pred_original))         
+  )
+
+  #Hacer un df con los resultados
+  resultados_finales <- data.frame(
+    RMSE_mean = mean(metricas_parti$RMSE),
+    RMSE_sd = sd(metricas_parti$RMSE),
+    MAE_mean = mean(metricas_parti$MAE),
+    MAE_sd = sd(metricas_parti$MAE)
+  )
+  
+  #Ver los resultados
+  print(resultados_finales) #Salen ya en escala original
+  
+  #RMSE_mean  RMSE_sd MAE_mean    MAE_sd
+  #1  1.753832 0.415828 1.279492 0.2142524
+ 
+
+########### REPRESENTAR EL MODELO ###################
+
+#Esto es lo que hay que representar
+df_vbles80b$media_Ht_est <- (exp(predict(modelo_1b, data = df_vbles80b))) - 0.001
+#media_Ht_est ya queda en escala original
+
+#Sacar los valores de r2 y rmse en escala original para representarlos
+
+print(r2 <- summary(modelo_1b)$r.squared %>% round(2))
+#0.83
+
+#deshacer la transformación log para rmse y mae para la tabla
+
+predi <- df_vbles80b$media_Ht_est #Ya está en escala original
+
+obs <- exp(df_vbles80b$media_Ht) - 0.001 #Transformar a escala original
+
+print(rmse <- sqrt(mean((obs - predi)^2))) #1.761786 m ya es escala original
+
+print(mae <- mean(abs(obs - predi))) #1.26288 m ya es escala original
+
+print(exp(0.972)) #2.643226
+
+summary(modelo_1b)
+
+#Representar el ajuste entre media_Ht medida y estimada con el modelo
+
+ggplot(df_vbles80b, aes(x = exp(media_Ht), y = media_Ht_est)) + geom_point()+
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "solid") +
+  stat_smooth(method = "lm", formula = y ~ x) + theme_bw() +
+  labs(title = "Ajuste lineal del modelo de altura media del arbolado", 
+       x = "Altura medida (m)", y = "Altura estimada (m)") + 
+  scale_x_continuous(breaks = seq(floor(min(exp(df_vbles80b$media_Ht) - 3)), 
+                                  ceiling(max(exp(df_vbles80b$media_Ht))), by = 5)) +
+  theme(plot.title = element_text(size = 28, hjust = 0.5, face = "bold"),
+        plot.caption.position = "plot",
+        plot.caption = element_text(hjust = 0.5),
+        axis.title = element_text(size = 24),
+        axis.text = element_text(size = 24)
+        )
+
+
