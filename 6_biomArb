@@ -588,14 +588,12 @@ biomasa <- dist_biom %>%
     categoria = case_when(
       BiomArb_m2 >= 0 & BiomArb_m2 < 5 ~ "0 - 5",
       BiomArb_m2 >= 5 & BiomArb_m2 < 10 ~ "5 - 10",
-      BiomArb_m2 >= 10 & BiomArb_m2 < 20 ~ "10 - 20",
-      BiomArb_m2 >= 20 & BiomArb_m2 < 50 ~ "20 - 50",
-      BiomArb_m2 >= 50 ~ "> 50"
+      BiomArb_m2 >= 10 ~ "> 10"
     ),
     #Convertir a factor para que salgan en ese orden 
     categoria = factor(
       categoria,
-      levels = c("0 - 5", "5 - 10", "10 - 20", "20 - 50", "> 50"),  
+      levels = c("0 - 5", "5 - 10", "> 10"), 
       ordered = TRUE  #Indicar que se ordene la leyenda en ese orden
     )
   )
@@ -604,9 +602,7 @@ biomasa <- dist_biom %>%
 verdes <- c(
   "0 - 5" = "#d4efdf",
   "5 - 10" = "#7dcea0",
-  "10 - 20" = "#27ae60",
-  "20 - 50" = "#1e8449",
-  "> 50" = "#145a32"
+  "> 10" = "#145a32"
 )
 
 
@@ -633,8 +629,8 @@ mapa_principal <- ggplot() + #Mapa con la biomasa arbórea
   scale_size_continuous( #Leyenda con tamaño en función de tamaño
     name = "Combustible (kg/m²)",
     range = c(2, 8),
-    breaks = c(0, 5, 10, 20, 50),  # Puntos de corte numéricos
-    labels = c("0 - 5", "5 - 10", "10 - 20", "20 - 50", "> 50"),
+    breaks = c(0, 5, 20),
+    labels = c("0 - 5", "5 - 10", "> 10"),
     guide = guide_legend(
       override.aes = list(
         fill = verdes  #Mostrar leyenda size con colores
@@ -721,7 +717,7 @@ mapa_final
 
 
 #Guardar el mapa con la biomasa de las parcelas categorizada
-st_write(biomasa, paste0(csvInv, "parce_biomAlta.shp"), delete_dsn = TRUE)
+st_write(biomasa, paste0(csvInv, "parce_biomAlta_act.shp"), delete_dsn = TRUE)
 
 #Guardar los datos con la biomasa de las parcelas categorizada
 biomasa_csv <- cbind(
@@ -729,7 +725,7 @@ biomasa_csv <- cbind(
   st_coordinates(biomasa)     #Coordenadas X e Y
 )
 
-write_excel_csv2(biomasa_csv, paste0(csvInv, "parce_biomAlta.csv"))
+write_excel_csv2(biomasa_csv, paste0(csvInv, "parce_biomAlta_act.csv"))
 
 
 ########## CÁLCULOS QUE APARECEN EN EL TEXTO ##############
@@ -748,7 +744,7 @@ biom <- biomArb_Est %>%
   pull(biom)
 
 print(biom)
-#Sale 3094602 kg
+#Sale 1688309 kg
 
 #Biomasa por unidad de superficie de cada parte del árbol y total
 biomM2 <- biomArb_Est %>%
@@ -762,11 +758,17 @@ biomM2 <- biomArb_Est %>%
     BiomArb = sum(BiomArb, na.rm = TRUE) / sup
   )
 
-#Biomasa calculada por unidad de superficie: 9.88254187253801 kg/m²
+
+print(biomM2$BiomArb)
+#Biomasa calculada por unidad de superficie: 	5.3915772 kg/m²
+
+print(biomM2$BiomArb/2)
+#Carbono al que equivale esa biomasa: 2.695789 kg/m²
+
 
 #Biomasa en informe IFN4Teruel: 40897377 Tm
-#Superficie en informe IFN4Teruel: 9750000000 m2 * 0,64 (% superficie arbolada)
 
+#Superficie en informe IFN4Teruel: 9750000000 m2 * 0,64 (% superficie arbolada)
 supIFN4 <- 9750000000 * 0.64
 print(supIFN4)
 
@@ -909,7 +911,7 @@ biomArb3 <- biomArb3 %>%
       Especie == 24 ~ 0.0139 * (Dn / 10)^2 * Ht,
       Especie == 25 ~ 0.0403 * (Dn / 10)^1.838 * Ht^0.945,
       Especie == 26 ~ 0.0278 * (Dn / 10)^2.115 * Ht^0.618,
-      Especie == 38 | Especie == 39 ~ 
+      Especie == 38 | Especie == 39 ~  
         0.0132 * (Dn/10)^2 * Ht + 0.217 * (Dn / 10) * Ht, #J.thurifera y J.phoenicia
       Especie == 43 ~ 0.0261 * (Dn / 10)^2 * Ht,
       Especie == 44 ~ 0.154 * (Dn / 10)^2,
@@ -936,7 +938,7 @@ biomArb3 <- biomArb3 %>%
       Especie == 24 ~ (3.926 * ((Dn / 10) - 27.5)) * ifelse(Dn <= 275, 0, 1),
       Especie == 25 ~ (0.228 * ((Dn / 10) - 32.5)^2) * ifelse(Dn <= 325, 0, 1),
       Especie == 26 ~ (Dn/10) * 0, #En las ramas medianas cuenta las grandes
-      Especie == 38 | Especie == 39 ~ 
+      Especie == 38 | Especie == 39 ~  
         (0.107 * ((Dn / 10) - 22.5)^2) * ifelse(Dn <= 225, 0, 1),
       Especie == 43 ~ (Dn / 10) * 0, #En el tronco cuenta las ramas grandes
       Especie == 44 ~ 0.0861 * (Dn / 10)^2,
@@ -964,7 +966,8 @@ biomArb3 <- biomArb3 %>%
         4.257 + 0.00506 * (Dn / 10)^2 * Ht - 0.0722 * (Dn / 10) * Ht,
       Especie == 25 ~ 0.0521 * (Dn / 10)^2,
       Especie == 26 ~ 0.000381 * (Dn / 10)^3.141,
-      Especie == 38 | Especie == 39 ~ 0.00792 * (Dn / 10)^2 * Ht,
+      Especie == 38 | Especie == 39 ~ 
+        0.00792 * (Dn / 10)^2 * Ht,
       Especie == 43 ~ 
         -0.0260 * (Dn / 10)^2 + 0.536 * Ht + 0.00538 * (Dn / 10)^2 * Ht,
       Especie == 44 ~ 0.127 * (Dn / 10)^2 - 0.00598 * (Dn / 10)^2 * Ht,
@@ -985,7 +988,7 @@ biomArb3 <- biomArb3 %>%
       Especie == 21 ~ 0.530 * (Dn / 10)^2.199 * Ht^(-1.153),
       Especie == 22 ~ 2.740 * (Dn / 10) - 2.641 * Ht,
       Especie == 24 ~ 
-        6.197 + 0.00932 * (Dn / 10)^2 * Ht^(-0.0686) * (Dn / 10) * Ht,
+        6.197 + 0.00932 * (Dn / 10)^2 * Ht - 0.0686 * (Dn / 10) * Ht,
       Especie == 25 ~ 0.0720 * (Dn / 10)^2,
       Especie == 26 ~ 0.0129 * (Dn / 10)^2.320,
       Especie == 38 | Especie == 39 ~ 0.273 * (Dn / 10) * Ht,
@@ -1000,7 +1003,7 @@ biomArb3 <- biomArb3 %>%
   )
 
 print(sum(biomArb3$ramasSkg / 1000, na.rm = TRUE))
-#Sale 1203.524 Tm
+#Sale 210.08965 Tm
 
 #Biomasa de las raices
 biomArb3 <- biomArb3 %>%
@@ -1011,9 +1014,8 @@ biomArb3 <- biomArb3 %>%
       Especie == 24 ~ 0.0785 * (Dn / 10)^2,
       Especie == 25 ~ 0.0189 * (Dn / 10)^2.445,
       Especie == 26 ~ 0.00444 * (Dn / 10)^2.804,
-      Especie == 38 | Especie == 39 ~ 
-        0.0767 * (Dn / 10) ^2, #J.thurifera y J.phoenicia
-      Especie == 43 ~ 0.143 * (Dn / 10),
+      Especie == 38 | Especie == 39 ~ 0.0767 * (Dn / 10) ^2, 
+      Especie == 43 ~ 0.143 * (Dn / 10)^2,
       Especie == 44 ~ 0.169 * (Dn / 10)^2,
       Especie == 45 ~ 0.254 * (Dn / 10)^2,
       Especie == 55 ~ 0.359 * (Dn / 10)^2,
@@ -1024,7 +1026,7 @@ biomArb3 <- biomArb3 %>%
 
 
 print(sum(biomArb3$raiceskg / 1000, na.rm = TRUE))
-#Sale 373.8938 Tm
+#Sale 374.22811 Tm
 
 biomArb3 <- biomArb3 %>%
   mutate(
@@ -1032,7 +1034,7 @@ biomArb3 <- biomArb3 %>%
   )
 
 print(sum(biomArb3$BiomArb / 1000, na.rm = TRUE))
-#Sale 2488.277 Tm
+#Sale 1495.1767 Tm
 
 #Salen unas 500 Tm en total menos que en el IFN4, pero también hay 1000 pies
 #más que en el IFN4 para hacer el cómputo. Hay unas 75 parcelas en las que se 
@@ -1051,7 +1053,7 @@ biomArb3 <- biomArb3 %>%
 head(biomArb3)
 
 #Guardar la biomasa arbórea en el IFN3
-write_excel_csv2(biomArb3, paste0(csvInv, "biomArb_mayoIFN3.csv"))
+write_excel_csv2(biomArb3, paste0(csvInv, "biomArb_mayoIFN3_act.csv"))
 
 biomArb3_Est <- biomArb3 %>%
   group_by(Estadillo) %>%
@@ -1073,12 +1075,12 @@ biomArb3_Est <- biomArb3_Est %>%
 str(biomArb3_Est)
 
 #Guardar la biomasa por parcela en el IFN3
-write_excel_csv2(biomArb3_Est, paste0(csvInv, "biomArb_m2EstIFN3.csv"))
+write_excel_csv2(biomArb3_Est, paste0(csvInv, "biomArb_m2EstIFN3_act.csv"))
 
 
 ########## HACER UN GRÁFICO COMPARATIVO DE LA BIOMASA EN IFN3 E IFN4 #########
 
-biomArb4_Est <- read.csv2(paste0(csvInv, "biomArb_m2Est.csv"),
+biomArb4_Est <- read.csv2(paste0(csvInv, "biomArb_m2Est_act.csv"),
                   stringsAsFactors = FALSE)
 
 sup4 <- biomArb4_Est %>%
@@ -1086,7 +1088,7 @@ sup4 <- biomArb4_Est %>%
   pull(sup4)
 
 print(sup4)
-#Sale 295859.5 m2
+#Sale 313138.2 m2
 
 sup3 <- biomArb3_Est %>%
   summarise(sup3 = sum(superf, na.rm = TRUE)) %>% 
@@ -1102,6 +1104,31 @@ biom3 <- biomArb3_Est %>%
 
 print(biom3)
 #Sale 2488277 kg
+
+biom3 <- biomArb3_Est %>%
+  summarise(biom3 = sum(BiomArb, na.rm = TRUE)) %>% 
+  pull(biom3)
+
+print(biom3)
+#Sale 1495177 kg
+
+#Sale 1688309 kg en IFN4
+
+print(incremento <- 1 - (1495177 / 1688309))
+
+#Sale 0.1143938 en tanto por 1
+
+
+#Biomasa por m2 en IFN3
+print(1495177 / 295859.5)
+#Sale 5.053672 kg/m2 de media de biomasa
+#Sale 5.3915772 en IFN4
+
+print(5.053672 / 2)
+#Sale 2.526836 kg/m2 de carbono
+
+print(incrementokgm2 <- 5.3915772 - 5.053672)
+#Sale 0.3379052 kg/m2 de media
 
 
 #Hacer primero el gráfico para IFN3 igual que se ha hecho para IFN4
@@ -1180,7 +1207,7 @@ ggplot(datos, aes(x = Partes, y = Biomasa_kg_m2, fill = IFN)) +
     fill = "Inventario:"
   ) +
   scale_x_discrete(labels = nombres_ejex) +
-  scale_fill_manual(values = c("IFN3" = "#3498db", "IFN4" = "#f39c12")) +  # Colores personalizados
+  scale_fill_manual(values = c("IFN3" = "#3498db", "IFN4" = "#f39c12")) + 
   theme_minimal() +
   theme(
     plot.title = element_text(hjust = 0.5, size = 28, face = "bold"), 
