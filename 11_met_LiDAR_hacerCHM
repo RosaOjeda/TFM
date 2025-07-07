@@ -1,0 +1,738 @@
+
+#Este es el código para hacer el canopy height model y las métricas Lidar
+#Hay que repetir todo para las 3 coberturas LiDAR
+
+
+
+########### SACAR LOS DATOS DE SUPERFICIE DE LAS PARCELAS ###############
+########### ESTO HAY QUE HACERLO PARA IFN3 E IFN4 #######################
+library(openxlsx)
+
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+library(tidyverse)
+
+#Abrir los datos con la biomasa de las parcelas 
+biom_parce <- read.csv2(paste0(csvInv, "biomArb_m2Est_act.csv"))
+biom_parce3 <- read.csv2(paste0(csvInv, "biomArb_m2EstIFN3_act.csv"))
+
+#Seleccionar las columnas estadillo y superficie de parcela
+sup_ifn4 <- biom_parce %>%
+  select(Estadillo, superf)
+
+sup_ifn3 <- biom_parce3 %>%
+  select(Estadillo, superf)
+
+#Ruta a la carpeta para guardar los archivos ráster de CHM
+#Hacerlo para las tres coberturas 
+rutaras <- "D:/TFMT/recN3c/raster3/"
+
+#Ruta a las nubes de puntos ya recortadas
+#Hacerlo para las tres cobuerturas
+ruta <- "D:/TFMT/recN3c/recrec/"
+
+
+library(lidR)
+library(terra)
+
+#Hacer un catálogo
+#Hay que hacer uno para cada cobertura
+ctg <- readLAScatalog(ruta, pattern = "*.laz", full.names = TRUE, 
+                        filter = "-drop_withheld -drop_z_below 0")
+
+summary(ctg)
+
+#Reproyectar el catálogo y ver las parcelas
+lidR::projection(ctg) <- 25830
+
+parcela<- readLAS("D:/TFMT/recN3c/recrec/parcela_629.laz")
+
+plot(parcela, color = "Z", size = 3, axis = TRUE, legend = TRUE)
+plot(parcela, color = "RGB", size = 5, bg = "white", axis = TRUE, legend = TRUE)
+
+
+############ QUITAR LOS OUTLIERS DE Z EN 1ª COBERTURA ########################
+#Esto solo hay que hacerlo la primera vez y en la primera cobertura
+
+# rutat <- "D:/TFMT/recN1c/infoRecN1c/"
+# 
+# ctg$Estadillo <- as.integer(gsub("parcela_([0-9]+)\\.laz", "\\1", basename(ctg$filename)))
+# 
+# ctg$zmax <- sapply(ctg$filename, function(f) {
+#   las <- readLAS(f)
+#   if (is.null(las)) return(NA)
+#   max(las@data$Z, na.rm = TRUE)
+# })
+# 
+# zetas <- ctg@data[, c("Estadillo", "zmax")]
+# 
+# z31 <- zetas %>%
+#   filter(zmax >= 31)
+#  
+# parcela_629 <- readLAS("D:/TFMT/recN1c/recrec/parcela_2138.laz")
+# 
+# rutaout <- "D:/TFMT/recN1c/recrec/parcelas_outliers/"
+# 
+# #Listar archivos LAZ en la ruta
+# archivos_laz <- list.files(rutaout, pattern = "\\.laz$", full.names = TRUE)
+# 
+# procesar_archivo <- function(laz_path) {
+#   tryCatch({
+#     # Leer archivo
+#     las <- readLAS(laz_path)
+#     
+#     #Verificar que el archivo tenga puntos o
+#     if (inherits(las, "LAS") && npoints(las) > 0) {
+#       #Establecer los límites
+#       lim_inf <- quantile(las$Z, 0.01, na.rm = TRUE)
+#       lim_sup <- quantile(las$Z, 0.99, na.rm = TRUE)
+#       
+#       #Filtrar los puntos
+#       las_filtrado <- filter_poi(las, Z >= lim_inf & Z <= lim_sup)
+#       
+#       #Hacer la ruta de salida
+#       nombre_archivo <- basename(laz_path)
+#       ruta_salida_archivo <- file.path(ruta, nombre_archivo)
+#       
+#       #Guardar el archivo modificado
+#       writeLAS(las_filtrado, ruta_salida_archivo, index = TRUE)
+#       
+#       cat("Procesado exitosamente:", nombre_archivo, "\n")
+#       return(TRUE)
+#     } else {
+#       warning("Archivo vacío o inválido: ", basename(laz_path))
+#       return(FALSE)
+#     }
+#   }, error = function(e) {
+#     warning("Error procesando ", basename(laz_path), ": ", e$message)
+#     return(FALSE)
+#   })
+# }
+# 
+# #Procesar los archivos
+# resultados <- lapply(archivos_laz, procesar_archivo)
+# 
+# #Obtener un resumen del resultado del proceso
+# exitosos <- sum(unlist(resultados))
+# fallidos <- length(archivos_laz) - exitosos
+# 
+# cat("\nResumen del procesamiento:\n")
+# cat("Archivos procesados exitosamente:", exitosos, "\n")
+# cat("Archivos con problemas:", fallidos, "\n")
+
+
+############# VER LA DENSIDAD DE 1º RETORNOS ############
+############## ESTO HAY QUE HACERLO PARA LAS 3 COB ############
+
+#Esto es una comprobación que solo hay que hacerla la primera vez
+
+# #Extraer 'Estadillo' del nombre del archivo
+# ctg$Estadillo <- as.integer(gsub("parcela_([0-9]+)\\.laz", "\\1", basename(ctg$filename)))
+# 
+# #Unir con las superficies de sup_ifn4
+# #Hacerlo también para sup_ifn3
+# ctg_data <- left_join(ctg@data, sup_ifn4[, c("Estadillo", "superf")], by = "Estadillo")
+# 
+# #Hacer una función para calcular la densidad de puntos
+# calcular_densidad_pr <- function(laz_path, area_m2) {
+#   #Leer archivo devolviendo errores si los hay
+#   las <- tryCatch(
+#     readLAS(laz_path),
+#     error = function(e) return(NULL)
+#   )
+# 
+#   #Verificar que el archivo es válido
+#   if (is.null(las) || npoints(las) == 0) return(NA)
+# 
+#   #Filtrar los primeros retornos
+#   primeros <- filter_poi(las, ReturnNumber == 1L)
+#   if (npoints(primeros) == 0) return(0)  #Devolver 0 si no hay 
+# 
+#   #Calcular la densidad
+#   n_puntos <- npoints(primeros)
+#   densidad <- n_puntos / area_m2
+# 
+#   return(densidad)
+# }
+# 
+# #Aplicar la función a todos los archivos del catálogo
+# ctg_data$Densidad_pr <- mapply(
+#   calcular_densidad_pr,
+#   ctg$filename,
+#   ctg_data$superf
+# )
+# 
+# #Filtrar y ver los resultados
+# densidades <- ctg_data %>%
+#   select(Estadillo, superf, Densidad_pr) %>%
+#   filter(!is.na(Densidad_pr))
+# 
+# head(densidades)
+# 
+# 
+# hist(densidades$Densidad_pr,
+#      main = "Histograma de densidad_pr",
+#      xlab = "Densidad",
+#      ylab = "Frecuencia",
+#      col = "skyblue",
+#      border = "white")
+# 
+
+
+
+######################## HACER EL CHM #########################
+############## HAY QUE HACERLO PARA LAS 3 COB ###################
+############## LUEGO MEJOR DEJARLO COMENTADO ###################
+
+########### ESTE ES EL CÓDIGO PARA LA 1ª COBERTURA ################
+#Los códigos cambian por que la primera cobertura tiene muy poca resolución
+library(lidR)
+library(terra)
+
+procesar_CHM <- function(las_path) {
+  las <- readLAS(las_path)
+  
+  #Establecer los parámetros del algoritmo para la resolución de la 1ª cobertura LiDAR
+  chm <- rasterize_canopy(las, res = 2, algorithm = pitfree(
+    thresholds = c(0, 2, 5, 10, 15, 20),
+    subcircle = 0.5,
+    max_edge = c(0, 1.5) 
+  ))
+    
+    #Validar el CHM generado con otro algoritmo
+    if (all(is.na(values(chm)))) {
+      chm <- rasterize_canopy(las, res = 2, algorithm = p2r(
+        subcircle = 1,
+        na.fill = tin()
+      ))
+    }
+    
+    #Guardar los archivos resultantes
+    if (!all(is.na(values(chm)))) {
+      schm <- focal(chm, w = matrix(1,3,3), fun = mean, na.rm = TRUE)
+      nombre_salida <- file.path(rutaras, sub("\\.laz$", ".tif", basename(las_path)))
+      writeRaster(schm, filename = nombre_salida, overwrite = TRUE)
+      return(nombre_salida)
+    } else {
+      warning("CHM no generado para ", basename(las_path), 
+              " (Puntos detectados: ", npoints(las), ")")
+      return(NA)
+    }
+}
+
+#Aplicar al catálogo con seguimiento del proceson
+resultados <- lapply(ctg$filename, function(x) {
+  cat("Procesando:", basename(x), "\n")
+  tryCatch(procesar_CHM(x),
+           error = function(e) {
+             message("Fallo en ", basename(x), ": ", e$message)
+             return(NA)
+           })
+})
+
+
+########### ESTE ES EL CODIGO PARA 2ª y 3ª COBERTURA ####################
+
+#Establecer los parámetros del algoritmo para las caracerísticas de los datos
+#LiDAR de la 2ª y 3ª cobertura
+
+thresholds <- c(0, 2, 4, 6, 8, 10, 15, 20)
+max_edge <- c(0, 2)
+resolucion <- 1  #Resolución en metros (0.5 para 3ª cobertura)
+radio_suavizado <- 0.01  #Radio para subcircle
+kernel <- matrix(1, 3, 3)
+
+#Función para procesar todos los archivos
+procesar_CHM <- function(las_path) {
+  las <- readLAS(las_path)
+  chm <- rasterize_canopy(las, res = resolucion, algorithm = pitfree(thresholds, max_edge, radio_suavizado))
+  schm <- terra::focal(chm, w = kernel, fun = mean, na.rm = TRUE)
+  nombre_salida <- file.path(rutaras, sub("\\.laz$", ".tif", basename(las_path)))
+  writeRaster(schm, filename = nombre_salida, overwrite = TRUE)
+  return(nombre_salida)
+}
+
+#Procesar todos los archivos del catálogo
+archivos_laz <- ctg$filename
+resultados <- lapply(archivos_laz, procesar_CHM)
+
+#Ver un resumen del proceso
+cat("Archivos procesados:", length(resultados))
+
+
+
+############## CALCULAR Fcc CON EL CHM ##################################
+############## ESTO HAY QUE HACERLO PARA LAS 3 COB ###################
+
+#Establecer umbral sobre 2 m
+umbral <- 2
+
+archivos <- list.files(rutaras, pattern = "\\.tif$", full.names = TRUE)
+
+extraer_estadillo <- function(ruta_archivo) {
+  nombre_archivo <- basename(ruta_archivo)
+  str_extract(nombre_archivo, "\\d+") %>% as.integer()
+}
+
+metricasFcc <- function(ruta_archivo) {
+  #Cargar el raster
+  raster <- rast(ruta_archivo)
+
+  #Calcular hm2 = media de alturas por encima de 2 m
+  hm2 <- global(2 + (raster * (raster > umbral)), "mean", na.rm = TRUE)[1, 1]
+
+  #Calcular la mitad de hm2
+  hmm <- hm2 / 2
+
+  #Calcular hp = % px sobre hmm
+  total_pixeles <- global(!is.na(raster), "sum", na.rm = TRUE)[1, 1]
+  pixeles_hmm <- global(raster > hmm, "sum", na.rm = TRUE)[1, 1]
+  hp <- (pixeles_hmm / total_pixeles) * 100
+
+  #Extraer el número de estadillo de los nombres de los archivos
+  estadillo <- extraer_estadillo(ruta_archivo)
+
+  #Hacer un df para guardar los resultados 
+  data.frame(Estadillo = estadillo, Fccpx = hp)
+}
+
+df_Fcc <- lapply(archivos, metricasFcc) %>%
+  bind_rows() %>%
+  arrange(Estadillo)
+
+#Ver y guardar los resultados en el df
+glimpse(df_Fcc)
+
+
+############### CALCULAR LA Hm CON EL CHM #######################
+############## ESTO HAY QUE HACERLO PARA LAS 3 COB ############
+
+#Se calcula la altura media por encima de 2 m, no desde el suelo
+
+metricasHm <- function(ruta_archivo) {
+  #Cargar el raster
+  raster <- rast(ruta_archivo)
+
+  #Calcular hm2 = media de alturas por encima de 2 m
+  hm2 <- global(2 + (raster * (raster > umbral)), "mean", na.rm = TRUE)[1, 1]
+
+  #Extraer el número de estadillo de los nombres de los archivos
+  estadillo <- extraer_estadillo(ruta_archivo)
+
+  #Hacer un df para guardar los resultados
+  data.frame(Estadillo = estadillo, Hmpx = hm2)
+}
+
+df_Hm <- lapply(archivos, metricasHm) %>%
+  bind_rows() %>%
+  arrange(Estadillo)
+
+#Ver y guardar los resultados en el df
+glimpse(df_Hm)
+
+
+#Unir las métricas
+metCHM <- df_Fcc %>%
+  full_join(df_Hm, by = "Estadillo")
+
+#Abrir el archivo con el cálculo de la diferencia de altura entre primeros y 
+#últimos retornos
+dif_1oUlt <- read.csv2(paste0(csvInv, "dif_1oUltIFN3.csv"),
+                       stringsAsFactors = FALSE)
+
+#Unir las métricas
+metCHM <- metCHM %>%
+  left_join(dif_1oUlt %>%
+              select(
+                Estadillo, difA),
+            by = "Estadillo"
+              )
+
+#Abrir el archivo con las métricas de densidad de retornos
+metDens <- read.csv2(paste0(csvInv, "met_dens_ret_cob1.csv"),
+                       stringsAsFactors = FALSE)
+
+#Unir las métricas
+metCHM <- metCHM %>%
+  full_join(metDens, by = "Estadillo"
+  )
+
+#Guardar las métricas para cada cobertura
+write_excel_csv2(metCHM, paste0(csvInv, "metCHM_c1.csv"))
+
+#Abrir el archivo de las métricas
+metCHM <- read.csv2(paste0(csvInv, "metCHM_c1.csv"),
+                       stringsAsFactors = FALSE)
+
+######### CALCULAR EL VOLUMEN CON LA DIFERENCIA DE ALTURA ENTRE PUNTOS ################
+################### ESTO HAY QUE HACERLO PARA LAS 3 COB #########################
+vol <- metCHM %>%
+  left_join(sup_ifn3, by = "Estadillo")
+
+vol <- vol %>%
+  mutate(cover_m2 = superf * Fccpx / 100) #### ESTA MÉRICA ES CLAVE ###################
+
+vol <- vol %>%
+  mutate(vol_m3 = difA * cover_m2)
+
+
+
+################### CALCULAR Nº PUNTOS A DIFERENTES ALTURAS #####################
+################### ESTO HAY QUE HACERLO PARA LAS 3 COB #########################
+#Ordenar los archivos por número de estadillo porque por algún motivo se han desordenado
+
+archivos <- list.files(path = ruta, pattern = "\\.laz$", full.names = TRUE)
+numeros_archivos <- as.integer(str_extract(basename(archivos), "\\d+"))
+
+orden <- order(numeros_archivos)
+laz_files_ordenados <- archivos[orden]
+numeros_ordenados <- numeros_archivos[orden]
+
+#Hacer un df con las alturas a las que se cuentan los puntos
+df_ptos <- data.frame(
+  Estadillo = numeros_ordenados,
+  ptos_sb2m = numeric(length(laz_files_ordenados)),
+  ptos_sb4m = numeric(length(laz_files_ordenados)),
+  #ptos_sb5m = numeric(length(laz_files_ordenados)),
+  ptos_sb6m = numeric(length(laz_files_ordenados)),
+  ptos_sb8m = numeric(length(laz_files_ordenados)),
+  ptos_sb10m = numeric(length(laz_files_ordenados)),
+  ptos_sb15m = numeric(length(laz_files_ordenados)),
+  ptos_sb20m = numeric(length(laz_files_ordenados)),
+  stringsAsFactors = FALSE
+)
+
+#Hacer una función que cuente retornos sobre cada altura
+contar_retornos_sobre <- function(archivo, altura) {
+  las <- readLAS(archivo, filter = paste0("-keep_z_above ", altura))
+  if (is.null(las)) return(0)
+  return(npoints(las))
+}
+
+#Contar el número de puntos sobre cada alturahivos)
+df_ptos$ptos_sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+df_ptos$ptos_sb4m <- sapply(laz_files_ordenados, contar_retornos_sobre, 4)
+df_ptos$ptos_sb6m <- sapply(laz_files_ordenados, contar_retornos_sobre, 6)
+df_ptos$ptos_sb8m <- sapply(laz_files_ordenados, contar_retornos_sobre, 8)
+df_ptos$ptos_sb10m <- sapply(laz_files_ordenados, contar_retornos_sobre, 10)
+df_ptos$ptos_sb15m <- sapply(laz_files_ordenados, contar_retornos_sobre, 15)
+df_ptos$ptos_sb20m <- sapply(laz_files_ordenados, contar_retornos_sobre, 20)
+
+#Calcular ratios sobre 2 m
+df_ptos$rat_4sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 4) / 
+  sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+df_ptos$rat_6sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 6) / 
+  sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+df_ptos$rat_8sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 8) / 
+  sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+df_ptos$rat_10sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 10) / 
+  sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+df_ptos$rat_15sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 15) /
+ sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+df_ptos$rat_20sb2m <- sapply(laz_files_ordenados, contar_retornos_sobre, 20) /
+ sapply(laz_files_ordenados, contar_retornos_sobre, 2)
+
+#Cambiar NA por 0 si no hay retorno a alguna altura
+df_ptos[is.na(df_ptos)] <- 0
+
+#Sumar los retornos totales de cada altura
+sumas <- colSums(df_ptos[, -1], na.rm = TRUE)
+
+#Ver los resultados
+cat("Resumen de retornos en todo el catálogo:\n")
+for (i in seq_along(sumas)) {
+  cat(names(sumas)[i], ":", sumas[i], "\n")
+}
+
+cat("\nVista previa de los datos:\n")
+glimpse(df_ptos)
+
+
+#Guardar el resultado en formato csv2
+write_excel_csv2(df_ptos, paste0(csvInv, "ptos_estr_1cob.csv"))
+
+
+
+vol <- vol %>%
+  full_join(df_ptos, by = "Estadillo")
+
+
+# vol <- vol %>%
+#   mutate(ptos_m3 = case_when(
+#     is.na(vol_m3) ~ NA_real_,  # Conserva NA si vol_m3 es NA
+#     vol_m3 == 0 ~ 0,
+#     TRUE ~ ptos_sb2m / vol_m3
+#   ))
+
+
+
+############ CALCULAR LA SUPERFICIE DE LOS PÍXELES A VARIAS ALTURAS ########
+############ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ###################
+
+#Extraer el número de estadillo del nombre del archivo
+extraer_estadillo <- function(ruta_archivo) {
+  nombre_archivo <- basename(ruta_archivo)
+  str_extract(nombre_archivo, "\\d+") %>% as.integer()
+}
+
+#Función para calcular superficies a distintas alturas
+calcular_superficies_altura <- function(ruta_archivo) {
+  #Cargar el archivo raster
+  r <- rast(ruta_archivo)
+  
+  #Establecer las alturas
+  umbrales <- c(2, 4, 5, 6, 8, 10, 15, 20)
+  
+  #Calcular la superficie a cada altura (4 px/m² => cada px = 0.25 m² = 0.5 m · 0.5 m)
+  #Modificar para cada cobertura, en segunda (1 px/m² => cada px = 1 m²)
+  #Modificar para cada cobertura, en primera (0,5 px/m² => cada px = 2 m²)
+  resultados <- sapply(umbrales, function(umbral) {
+    #Crear una máscara para los píxeles por encima de cada altura
+    mascara <- r > umbral
+    #Contar píxeles sobre el umbral TRUE (1) y multiplicar por área de cada píxel
+    if (global(mascara, "sum", na.rm = TRUE) > 0) {
+      sum(values(mascara, na.rm = TRUE)) * 4     #### AQUÍ 0,25 para 3c, 1 para 2c y 4 para 1c###
+    } else {
+      0
+    }
+  })
+  
+  #Hacer un df para guardar los resultados
+  data.frame(
+    Estadillo = extraer_estadillo(ruta_archivo),
+    `sup2m` = resultados[1],
+    `sup4m` = resultados[2],
+    `sup6m` = resultados[3],
+    `sup8m` = resultados[4],
+    `sup10m` = resultados[5],
+    `sup15m` = resultados[6],
+    `sup20m` = resultados[7],
+    check.names = FALSE
+  )
+}
+
+#Procesar todos los archivos raster
+procesar_carpeta <- function(rutaras) {
+  archivos <- list.files(rutaras, pattern = "\\.tif$", full.names = TRUE)
+  
+  #Verificar que el archivo tiene datosVerificar si hay archivos
+  if(length(archivos) == 0) {
+    stop("No se encontraron archivos .tif en la ruta especificada")
+  }
+  
+  #Procesar los archivos indicando si hay errores
+  sup_alturas <- lapply(archivos, function(x) {
+    tryCatch({
+      calcular_superficies_altura(x)
+    }, error = function(e) {
+      message("Error procesando ", basename(x), ": ", e$message)
+      NULL
+    })
+  })
+  
+  #Filtrar los resultados que no son nulos por falta de px a esa altura
+  sup_alturas <- sup_alturas[!sapply(sup_alturas, is.null)]
+  
+  if(length(sup_alturas) == 0) {
+    stop("No se pudo procesar ningún archivo correctamente")
+  }
+  
+  do.call(rbind, sup_alturas) %>% 
+    arrange(Estadillo)  
+}
+
+#Aplicar la función a la carpeta que contiene los archivos
+sup_alturas <- procesar_carpeta(rutaras)
+
+#Guardar el resultado
+write.csv(resultados, "superficies_por_altura.csv", row.names = FALSE)
+
+#Unir las métricas
+sup_alt <- sup_alturas %>%
+  left_join(metCHM %>%
+              select(Estadillo, Hmpx),
+            by = "Estadillo")
+
+
+
+############ CALCULAR VOLÚMENES DE SECCIONES DE CONOS Y CONO (CON PICO) ###################
+############ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ###################
+
+calcular_volumenes_cono_Hmpx <- function(datos1) {
+  # Verificar que existe columna Hmpx
+  if(!"Hmpx" %in% names(datos1)) {
+    stop("Se requiere columna Hmpx en los datos")
+  }
+  
+  alturas <- c(2, 4, 6, 8, 10, 15, 20)
+  nombres_columnas <- paste0("sup", alturas, "m")
+  
+  #Bucle para calcular los volúmenes
+  for(i in 1:(length(alturas)-1)) {
+    h_inf <- alturas[i]
+    h_sup <- alturas[i+1]
+    
+    col_inf <- nombres_columnas[i]
+    col_sup <- nombres_columnas[i+1]
+    nombre_volumen <- paste0("Vol_", h_inf, "a", h_sup, "m")
+    
+    datos1[[nombre_volumen]] <- ifelse(
+      datos1[[col_sup]] == 0,
+      (1/3) * (datos1$Hmpx - h_inf) * datos1[[col_inf]],
+      (1/3) * (h_sup - h_inf) * (
+        datos1[[col_inf]] + 
+          datos1[[col_sup]] + 
+          sqrt(datos1[[col_inf]] * datos1[[col_sup]])
+      )
+    )
+    
+    #Redondear a 3 decimales
+    datos1[[nombre_volumen]] <- round(datos1[[nombre_volumen]], 3)
+  }
+  
+  columnas_vol <- grep("^Vol_", names(datos1), value = TRUE)
+  datos1$Volumen_total <- round(rowSums(datos1[, columnas_vol], na.rm = TRUE), 3)
+  
+  return(datos1)
+}
+
+#Aplicar la función a los datos
+vol_conos <- calcular_volumenes_cono_Hmpx(sup_alt)
+
+vol_conos <- vol_conos %>%
+  rename(vol_conos = Volumen_total)
+
+
+
+############# CALCULAR VOLÚMENES SOLO DE SECCIONES DE CONOS (SIN PICO) ####################
+############ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ###################
+
+calcular_volumenes <- function(datos) {
+  #Establecer las alturas de cada cono
+  alturas <- c(2, 4, 6, 8, 10, 15, 20)
+  nombres_columnas <- paste0("sup", alturas, "m")
+  
+  #Verificar que las columnas están
+  if(!all(nombres_columnas %in% names(datos))) {
+    stop("Faltan columnas de superficies en los datos")
+  }
+  
+  #Preparar los datos para calcular el volumen
+  for(i in 1:(length(alturas)-1)) {
+    h_actual <- alturas[i]
+    h_siguiente <- alturas[i+1]
+    altura_seccion <- h_siguiente - h_actual
+    
+    #Preparar las columnas para guardar los datos
+    col_actual <- nombres_columnas[i]
+    col_siguiente <- nombres_columnas[i+1]
+    nombre_volumen <- paste0("Vol_", h_actual, "a", h_siguiente, "m")
+    
+    #Calcular el volumen en cada sección
+    datos[[nombre_volumen]] <- ifelse(
+      datos[[col_siguiente]] == 0,  #Devolver 0 si es el ultimo cono
+      0,  #Volumen = 0
+      (1/3) * altura_seccion * (
+        datos[[col_actual]] + 
+          datos[[col_siguiente]] + 
+          sqrt(datos[[col_actual]] * datos[[col_siguiente]])
+      )
+    )
+  }
+  
+  #Sumar todas las secciones para calcular el volumen total 
+  columnas_vol <- grep("^Vol_", names(datos), value = TRUE)
+  datos$Volumen_total <- rowSums(datos[, columnas_vol], na.rm = TRUE)
+  
+  return(datos)
+}
+
+#Aplicar la función a los archivos
+vol_sec_conos <- calcular_volumenes(sup_alturas)
+
+
+vol_sec_conos <- vol_sec_conos %>%
+  rename(vol_sec_conos = Volumen_total)
+
+#Unir las métricas de las dos formas de calcular el volumen
+vol_sec <- vol_sec_conos %>%
+  select(Estadillo, vol_sec_conos) %>%
+  left_join(vol_conos %>%
+              select(Estadillo, vol_conos), 
+    by = "Estadillo")
+
+
+#Unir las métricas con las formas anteriores de calcular el volumen
+vol_todo <- vol %>%
+  full_join(vol_sec, by = "Estadillo")
+
+#Unir con las métricas de superficie
+vol_sup_ptos <- vol %>%
+  full_join(sup_alturas, by = "Estadillo")
+
+#Guardar los resultados
+vol_sup_ptos <- read.csv2(paste0(csvInv, "vol_sup_ptos_1cob.csv"))
+
+#################### CALCULAR LA SUPERFICIE CUBIERTA A DIFERENTES ALTURAS ###########
+############ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ###################
+met_biom <- vol_sup_ptos %>%
+  mutate(cover2 = 100 * sup2m / superf) %>%
+  mutate(cover4 = 100 * sup4m / superf) %>%
+  mutate(cover6 = 100 * sup6m / superf) %>%
+  mutate(cover8 = 100 * sup8m / superf) %>%
+  mutate(cover10 = 100 * sup10m / superf) %>%
+  mutate(cover15 = 100 * sup15m / superf) %>%
+  mutate(cover20 = 100 * sup20m / superf) #%>%
+
+#Guardar los resultados 
+write_excel_csv2(met_biom, paste0(csvInv, "met_biom1c.csv"))
+
+
+#Abrir el archivo
+met_biom1c <- read.csv2(paste0(csvInv, "met_biom1c.csv"),
+                     stringsAsFactors = FALSE)
+
+#Inocorporara la mérica que sale de Fccpx y Hmpx
+met_biom1c <- met_biom1c %>%
+  mutate(c2_hpx = Fccpx / Hmpx)
+
+names(modelo_3$coefficients)
+names(modelo_2b$coefficients)
+
+############ PREPARAR LOS DATOS PARA EL ARCHIVO DE TENDENCIAS ##############
+############ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ###################
+############ LUEGO HAY QUE UNIRLO TODO #############################
+names(met_biom2c)
+
+mod2cob <- met_biom2c %>%
+  select(Estadillo, sup6m, cover_m2, c2_hpx, ptos_sb6m, ptos_sb4m, ptos_sb15m, sup8m)
+
+mod2 <- mod2cob
+
+
+mod2[, -1] <- log(mod2[, -1] + 0.001)
+
+mod2$est_mod2b <- exp(predict(modelo_2b, newdata = mod2)) / 1000
+
+mod2$est_mod3 <- exp(predict(modelo_3, newdata = mod2)) / 1000
+
+
+mod2 <- mod2[ , c(1, 9, 10)]
+
+
+mod_1_3 <- mod1 %>%
+  left_join(mod3, by = "Estadillo")
+
+biom <- mod_1_3 %>%
+  left_join(mod2, by = "Estadillo") %>%
+  relocate(BiomArb_est3, .after = est_mod3)
+
+
+write_excel_csv2(biom, paste0(csvInv, "pred_tendencia.csv"))
+
+tend <- read.csv2(paste0(csvInv, "pred_tendencia.csv"),
+                        stringsAsFactors = FALSE)
+
+
+
+
