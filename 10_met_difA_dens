@@ -47,84 +47,12 @@ plot(parcela, color = "RGB", size = 3, bg = "white", axis = TRUE, legend = TRUE)
 
 
 
+#################### CALCULAR DIFERENCIA MEDIA DE ALTURA ENTRE PRIMER Y ÚLTIMO RETORNO ##########
+################ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ##########################
 library(purrr)
-
 library(stringr)
 
-calcular_difA <- function(las_file) {
-  #Extraer número de estadillo del nombre del archivo
-  estadillo <- as.integer(str_extract(basename(las_file), "\\d+"))
-  
-  #Leer el archivo LAZ filtrando sobre 2 m
-  las <- readLAS(las_file, filter = "-keep_z_above 2 -keep_first -keep_last")
-  
-  #Verificar si hay archivos vacíos y hacer un df 
-  if (npoints(las) == 0) { 
-    return(data.frame(
-      Estadillo = estadillo,
-      media_primer_retorno = NA_real_,
-      media_ultimo_retorno = NA_real_,
-      diferencia_media = NA_real_,
-      n_pares_validos = 0L,
-      archivo = basename(las_file),
-      stringsAsFactors = FALSE
-    ))
-  }
-  
-  #Obtener los datos como data.table
-  dt <- las@data
-  
-  #Filtrar los primeros y últimos retornos
-  dt_filtrado <- dt[ReturnNumber == 1 | ReturnNumber == NumberOfReturns,]
-  
-  #Calcular las medias
-  medias <- dt_filtrado %>%
-    group_by(ReturnNumber) %>%
-    summarise(
-      media_altura = mean(Z),
-      .groups = 'drop'
-    )
-  
-  ret1 <- medias %>% filter(ReturnNumber == 1) %>% pull(media_altura)
-  retU <- medias %>% filter(ReturnNumber == max(ReturnNumber)) %>% pull(media_altura)
-  
-  #Contar pares de retornos
-  n_pares <- nrow(dt[ReturnNumber == 1 & NumberOfReturns == max(NumberOfReturns)])
-  
-  #Guardar los resultados en un df
-  data.frame(
-    Estadillo = estadillo,
-    media_primer_retorno = ifelse(length(ret1) > 0, ret1, NA_real_),
-    media_ultimo_retorno = ifelse(length(retU) > 0, retU, NA_real_),
-    diferencia_media = ifelse(length(ret1) > 0 & length(retU) > 0, ret1 - retU, NA_real_),
-    n_pares_validos = n_pares,
-    archivo = basename(las_file),
-    stringsAsFactors = FALSE
-  )
-}
-
-procesar_catalogo <- function(ruta) {
-  #Listar los archivos laz
-  laz_files <- list.files(ruta, pattern = "\\.laz$", full.names = TRUE, ignore.case = TRUE)
-  
-  #Procesar los archivos devolviendo errores
-  resultados <- lapply(laz_files, function(x) {
-    tryCatch(
-      calcular_difA(x),
-      error = function(e) {
-        message("Error procesando ", basename(x), ": ", e$message)
-        return(NULL)
-      }
-    )
-  })
-  
-  #Unir los resultados
-  bind_rows(compact(resultados)) %>% 
-    arrange(Estadillo)
-}
-
-
-procesar_archivo <- function(las, nombre_archivo) {
+calcular_difA <- function(las, nombre_archivo) {
   #Extraer número de Estadillo del nombre del archivo
   estadillo <- as.integer(gsub("parcela_|_v.*", "", nombre_archivo))
   
@@ -177,14 +105,14 @@ procesar_archivo <- function(las, nombre_archivo) {
   return(list(metricas_retornos = metricas, diferencia = diferencia))
 }
 
-#Procesar todo el catálogo
-resultados_seguros <- catalog_apply(ctg, function(chunk) {
+#Procesar todo el catálogo devolviendo null si no hay datos
+resultados <- catalog_apply(ctg, function(chunk) {
   tryCatch({
     las <- readLAS(chunk)
     if (is.empty(las)) return(NULL)
     
     nombre_archivo <- tools::file_path_sans_ext(basename(chunk@files))
-    procesar_archivo(las, nombre_archivo)
+    calcular_difA(las, nombre_archivo)
   }, error = function(e) {
     message("Error procesando ", chunk@files, ": ", e$message)
     return(NULL)
@@ -192,10 +120,10 @@ resultados_seguros <- catalog_apply(ctg, function(chunk) {
 })
 
 #Filtrar resultados correctos
-resultados_validos <- resultados_seguros[!sapply(resultados_seguros, is.null)]
+validos <- resultados[!sapply(resultados, is.null)]
 
-metricas_retornos <- map_dfr(resultados_validos, ~ .x$metricas_retornos)
-diferencias <- map_dfr(resultados_validos, ~ .x$diferencia)
+metricas_retornos <- map_dfr(validos, ~ .x$metricas_retornos)
+diferencias <- map_dfr(validos, ~ .x$diferencia)
 
 #Extraer los resultados
 estadillos_con_datos <- diferencias %>% 
@@ -204,7 +132,7 @@ estadillos_con_datos <- diferencias %>%
   unique()
 
 cat("\nEstadillos con diferencias calculadas:", 
-    length(estadillos_con_datos), "/", length(resultados_seguros), "\n")
+    length(estadillos_con_datos), "/", length(resultados), "\n")
 
 #Resumen de los resultados
 resumen_diferencias <- diferencias %>%
@@ -228,30 +156,34 @@ dif_1oUlt <- sup_ifn4 %>%
 write_excel_csv2(dif_1oUlt, paste0(csvInv, "dif_1oUlt.csv"))
 
 
+#################### CALCULAR DENSIDADES MEDIAS DE PUNTOS ##########
+################ ESTO HAY QUE HACERLO PARA LAS 3 COBERTURAS ##########################
 
 archivos <- list.files(ruta, pattern = "\\.laz$", full.names = TRUE)
 
 calcular_densidades <- function(archivo) {
   las <- readLAS(archivo)
   
-  # Corrección 1: Verificar si el archivo está vacío
+  #Comprobar que el archivo tiene datos
   if (npoints(las) == 0) {
     cat("Archivo vacío:", basename(archivo), "\n")
     return(NULL)
   }
-  
+
+  #Esto hay que hacerlo también para ifn3
   estadillo <- gsub("parcela_|\\.laz", "", basename(archivo))
   area <- sup_ifn4$superf[sup_ifn4$Estadillo == estadillo]
   
-  # Corrección 2: Verificar si se encontró el área
+  #Comprobar que está la columna de superficie
+  #Esto hay que hacerlo también para ifn3
   if (length(area) == 0) {
-    cat("Estadillo no encontrado en stParce:", estadillo, "\n")
+    cat("Estadillo no encontrado en sup_ifn4:", estadillo, "\n")
     return(NULL)
   }
   
-  area_parcela <- area  # m²
+  area_parcela <- area  #El resultado sale en m²
   
-  # --- Densidad TOTAL ---
+  #Cálculo de la densidad de todos los retornos
   n_total <- npoints(las)
   dens_total <- n_total / area_parcela
   
@@ -260,7 +192,7 @@ calcular_densidades <- function(archivo) {
   densRet_sb2 <- n_total_z2 / area_parcela
   percRet_sb2 <- (n_total_z2 / n_total) * 100
   
-  # --- Densidad PRIMEROS retornos ---
+  #Cálculo de la densidad de los 1º retornos
   primeros <- filter_poi(las, ReturnNumber == 1)
   n_primeros <- npoints(primeros)
   dens_prim <- n_primeros / area_parcela
@@ -278,14 +210,15 @@ calcular_densidades <- function(archivo) {
   )
 }
 
-# Procesar archivos
-resultados <- lapply(archivos, calcular_densidades)
-df_densidades <- do.call(rbind, resultados[!sapply(resultados, is.null)])
+#Aplicar la función a todo el catálogo
+resultados_dens <- lapply(archivos, calcular_densidades)
+df_densidades <- do.call(rbind, resultados_dens[!sapply(resultados_dens, is.null)])
 
 
-# 5. Guardar
+#Guardar el resultado
+#Esto hay que hacerlo para las 3 coberturas
 write_excel_csv2(df_densidades, paste0(csvInv, "met_dens_ret_cob3.csv"))
 
-# Mostrar
+#Ver los resultados
 head(df_densidades)
 
