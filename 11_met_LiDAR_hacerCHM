@@ -11,6 +11,7 @@ library(openxlsx)
 csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
 
 library(tidyverse)
+library(stringr)
 
 #Abrir los datos con la biomasa de las parcelas 
 biom_parce <- read.csv2(paste0(csvInv, "biomArb_m2Est_act.csv"))
