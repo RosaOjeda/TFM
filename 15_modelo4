@@ -499,7 +499,7 @@ results <- lapply(seq_along(folds), function(i) {
   #Residuos y métricas
   residuos <- test_data$BiomTm - pred
   
-  # Pseudo-R² (Koenker & Machado)
+  #Calcular pseudo-R²
   rho <- function(u, tau) u * (tau - (u < 0))
   V1 <- sum(rho(residuals(model), tau = 0.5))
   V0 <- sum(rho(train_data$BiomTm - median(train_data$BiomTm), tau = 0.5))
@@ -522,15 +522,15 @@ results_df <- do.call(rbind, results)
 summary_metrics <- results_df %>%
   summarise(
     RMSE_mean = mean(RMSE),
-    RMSE_sd = sd(RMSE),       # Desviación estándar de RMSE
+    RMSE_sd = sd(RMSE),      
     MAE_mean = mean(MAE),
-    MAE_sd = sd(MAE),         # Desviación estándar de MAE
+    MAE_sd = sd(MAE),     
     MedAE_mean = mean(MedAE),
-    MedAE_sd = sd(MedAE),     # Desviación estándar de MedAE
+    MedAE_sd = sd(MedAE),  
     rho_mean = mean(rho),
     rho_sd = sd(rho),
     PseudoR2_mean = mean(PseudoR2),
-    PseudoR2_sd = sd(PseudoR2) # Desviación estándar de Pseudo-R²
+    PseudoR2_sd = sd(PseudoR2) 
   )
 
 print(summary_metrics)
@@ -582,7 +582,7 @@ ggplot(df_vbles80b, aes(x = exp(BiomTm), y = BiomTm_est)) +
   labs(
     title = "Ajuste lineal del modelo 4 de carga de combustible", 
     x = "Calculada de IFN4 por parcela (Tm)", 
-    y = "Estimada LiDAR 3ª cob. por parcela (Tm)"  # Eliminado el caption aquí
+    y = "Estimada LiDAR 3ª cob. por parcela (Tm)"  
   ) +
   theme(
     plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
@@ -623,7 +623,7 @@ vari$BiomTm_pred_upr4 <- round(vari$BiomTm_pred_upr4, 3)
 head(vari[, c("BiomTm_pred4", "BiomTm_pred_se4", "BiomTm_pred_lwr4", "BiomTm_pred_upr4")])
 
 
-# Asegura que ambos objetos tengan el mismo orden y filas
+#Asegurar que hay el mismo orden de filas
 bdd_sub <- bdd[rownames(vari), ]
 
 df_vbles80e <- cbind(
@@ -639,12 +639,11 @@ mod4 <- df_vbles80e %>%
 tendBiom <- mod3 %>%
   left_join(mod4, by = "Estadillo")
 
+#Gauradar el archivo
 write_excel_csv2(tendBiom, paste0(csvInv, "pred_tendenciaOK.csv"))
 
 
 ###################### ESTE ES EL MAPA RESULTANTE DEL MODELO 4 ################
-
-
 sup_parce <- biom_parce %>%
   select(Estadillo, superf)
 
@@ -662,18 +661,13 @@ datos_mod4 <- df_vbles80e %>%
   left_join(bdd %>%
               select(Estadillo, Fccpx, Hmpx, cover_m2), by = "Estadillo")
 
-
+#Guardar los datos
 write_excel_csv2(datos_mod4, paste0(csvInv, "datos_mod4.csv"))
-
-
 
 datos_mod4 <- read.csv2(paste0(csvInv, "datos_mod4.csv"))
 
-
-
 datos_mapa <- datos_mod4 %>%
   select(Estadillo, BiomTm_est, biom_kgm2, Fccpx, Hmpx, cover_m2)
-
 
 library(sf)
 shp <- "D:/TFMT/cartoTeru/coord_parcelas/"
@@ -686,7 +680,6 @@ centros <- st_read(paste0(shp, "centrosMC.shp"))
 library(mapview)
 mapview(centros)
 
-
 mapam4 <- centros %>% 
   inner_join(datos_mapa, by = "Estadillo") 
 
@@ -694,7 +687,7 @@ head(mapam4)
 st_crs(mapam4)  # Debería mostrar EPSG:4326
 class(mapam4)
 
-
+#Ruta a la silueta de la provincia de Teruel
 rutaTeru <- "D:/TFMT/cartoTeru/provTeru/"
 teru <- st_read(paste0(rutaTeru, "ogr_1737345219701.shp"))
 
@@ -707,10 +700,10 @@ biom_modelo <- mapam4 %>%
       biom_kgm2 >= 5 & biom_kgm2 < 10 ~ "5 - 10",
       biom_kgm2 >= 10 ~ "> 10"
     ),
-    # Convertir a factor con orden específico
+    #Convertir a factor para que tengan el orden especificado
     categoria = factor(
       categoria,
-      levels = c("0 - 5", "5 - 10", "> 10"),  # Orden deseado
+      levels = c("0 - 5", "5 - 10", "> 10"),  
       ordered = TRUE  # Marcar como ordenado
     )
   )
@@ -724,16 +717,15 @@ biom_modelo <- biom_modelo %>%
     )
   )
 
-
-
 class(biom_modelo)
 
-
+#Guardar el resultado
 st_write(biom_modelo, paste0(csvInv, "biomArb_modelo4.shp"), delete_dsn = TRUE)
 
 
 head(biom_modelo)
 
+#Crear una paleta
 verdes <- c(
   "0 - 5" = "#d4efdf",
   "5 - 10" = "#7dcea0",
@@ -744,7 +736,7 @@ verdes <- c(
 library(patchwork)
 
 mapa_principal <- ggplot() +
-  # Capa base: Teruel
+  #Poner la silueta de la provincia de Teruel
   geom_sf(data = teru, fill = NA, color = "#000000", linewidth = 0.5) +
   geom_sf(
     data = biom_modelo,
@@ -754,17 +746,17 @@ mapa_principal <- ggplot() +
     stroke = 0.3,
     alpha = 0.8
   ) +
-  # Escala de relleno (verdes) - ¡CORRECCIÓN IMPORTANTE: usar scale_fill_*!
+  #Hacer la escala de relleno
   scale_fill_manual(
     name = "Biomasa (kg/m²)",
     values = verdes,
     drop = FALSE,
-    guide = "none" # Fuerza a mostrar todas las categorías
+    guide = "none" 
     ) +
   scale_size_continuous( #Leyenda con tamaño en función de tamaño
     name = "Combustible (kg/m²)",
     range = c(2, 6),
-    #breaks = c(0, 5, 10, 20, 50),  # Puntos de corte numéricos
+    #breaks = c(0, 5, 10, 20, 50), 
     breaks = c(0.51, 5, 10), #El valor mínimo del modelo es 0,507
     #labels = c("0 - 5", "5 - 10", "10 - 20", "20 - 50", "> 50"),
     labels = c("0 - 5", "5 - 10", "> 10"),
@@ -774,7 +766,6 @@ mapa_principal <- ggplot() +
       )
     )
   ) +
-  # Elementos adicionales (sin cambios)
   annotation_north_arrow(
     location = "tr",
     which_north = "true",
@@ -841,8 +832,6 @@ histograma <- ggplot(biom_modelo, aes(x = categoria)) +
     panel.grid.major = element_line(color = "gray90"),
     panel.grid.minor = element_blank()
   )
-
-
 
 
 plot(histograma)
