@@ -1,0 +1,630 @@
+#Este código es para hacer los mapas de zoans prioritarias
+
+
+# ############# PREPARAR DATOS #############################
+########## TODO ESTO SOLO HAY QUE CORRERLO LA PRIMERA VEZ ##########
+#  
+# csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+# 
+# library(sf)
+# 
+# #Abrir la capa con los datos de arbolado
+# arbolado <- st_read(paste0(csvInv, "parce_biomAlta_act.shp"),
+#                             stringsAsFactors = FALSE)
+# head(arbolado)
+# 
+# arbolado <- arbolado %>%
+#   rename(Estadillo = Estadll) %>%
+#   rename(BiomArb_m2 = BmArb_2) %>%
+#   rename(cat_arb = categor) %>%
+#   select(Estadillo, Huso, ModComb, BiomArb_m2, cat_arb)
+# 
+# library(openxlsx)
+# 
+# stParce <- read.csv2(paste0(csvInv, "stParce_red.csv"),
+#                      stringsAsFactors = FALSE)
+# head(stParce)
+# 
+# fcc <- stParce %>%
+#   select(Estadillo, FccArb)
+# 
+# arbolado <- arbolado %>%
+#   left_join(fcc, by = "Estadillo")
+# 
+# arb_alto <- arbolado %>% 
+#   filter(cat_arb %in% c("5 - 10", "> 10"))
+# 
+# 
+# 
+# #Abrir la capa con los datos de regenerado con altura mayor a 3 m
+# regenerado <- st_read(paste0(csvInv, "parce_regeAltoH.shp"),
+#                       stringsAsFactors = FALSE)
+# head(regenerado)
+# 
+# regenerado <- regenerado %>%
+#   select(Hm_rege, cont_V)
+# 
+# arb_reg <- st_intersection(arbolado, regenerado)
+# 
+# 
+# #Abrir la capa con los datos de matorral con alto potencial de crecimiento
+# matorral <- st_read(paste0(csvInv, "parce_matoAlta.shp"),
+#                       stringsAsFactors = FALSE)
+# 
+# head(matorral)
+# 
+# matorral <- matorral %>%
+#   rename(Estadillo = Estadll) %>%
+#   rename(cat_mato = categor) %>%
+#   select(HmMat, FccMat, cat_mato)
+# 
+# arb_mat <- st_intersection(arbolado, matorral)
+# 
+# 
+# regmatarb <- st_intersection(arb_reg, arb_mat)
+# 
+# head(regmatarb)
+# 
+# regmatarb <- regmatarb %>%
+#   select(-c(Estadillo.1, Huso.1, ModComb.1, BiomArb_m2.1, cat_arb.1, FccArb.1))
+# 
+# 
+# mapview(regmatarb)
+# 
+# #Guarcar el resultado en capa vectorial y en csv2
+# st_write(regmatarb, paste0(csvInv, "BiomArbRegeMato_act.shp"), delete_dsn = TRUE)
+# 
+# rma <- st_read(paste0(csvInv, "BiomArbRegeMato_act.shp"),
+#                       stringsAsFactors = FALSE)
+# 
+# mapview(rma)
+# 
+# regmatarb_csv <- cbind(
+#   st_drop_geometry(regmatarb),  # Datos atributivos sin geometría
+#   st_coordinates(regmatarb)     # Coordenadas X e Y
+# )
+# 
+# write_excel_csv2(regmatarb_csv, paste0(csvInv, "BiomArbRegeMato_act.csv"))
+
+
+########### MAPA ZONAS PRIORITARIAS ECUACIONES ALOMÉTRICASS #####################
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+library(openxlsx)
+
+parcelas_datos <- read.csv2(paste0(csvInv, "BiomArbRegeMato_act.csv"),
+                            stringsAsFactors = FALSE)
+
+library(sf)
+
+parcelas_mapa <- st_read(paste0(csvInv, "BiomArbRegeMato_act.shp"),
+                      stringsAsFactors = FALSE)
+#Está en WGS84
+#centrosUTM <- st_transform(centros, crs = 25830)
+
+library(mapview)
+
+mapview(parcelas_mapa)
+
+library(tidyverse)
+
+#Ruta a la capa con las coordenadas de las parcelas
+shp <- "D:/TFMT/cartoTeru/coord_parcelas/"
+
+centros <- st_read(paste0(shp, "centrosMC.shp"))
+#centrosUTM <- st_transform(centros, crs = 25830)
+
+mapview(centros)
+
+#Ruta a la capa de la provincia de Teruel
+rutaTeru <- "D:/TFMT/cartoTeru/provTeru/"
+teru <- st_read(paste0(rutaTeru, "ogr_1737345219701.shp"))
+
+#Convertir a factor y poner el orden de aparición
+parcelas_mapa <- parcelas_mapa%>%
+  mutate(
+    categoria = factor(
+      cat_arb,
+      levels = c("0 - 5", "5 - 10"),
+      ordered = TRUE
+    )
+  )
+
+str(parcelas_mapa)
+
+#Hacer paleta de colores
+azules <- c(
+  "0 - 5" = "#85c1e9",
+  "5 - 10" = "#2874a6"
+)
+
+
+library(ggspatial)
+
+library(patchwork)
+
+mapa_principal <- ggplot() +
+  #Añadir la silueta de la provincia
+  geom_sf(data = teru, fill = NA, color = "#000000", linewidth = 0.5) +
+  
+  #Añadir los puntos con los datos
+  geom_sf(
+    data = parcelas_mapa,  
+    aes(fill = categoria, size = BiomArb_m2),
+    color = "black",
+    shape = 21,
+    stroke = 0.3,
+    alpha = 0.8
+  ) +
+  
+  #Añadir la escala de relleno
+  scale_fill_manual(
+    name = "Biomasa (kg/m²)",
+    values = azules,  
+    drop = FALSE,
+    guide = "none"
+  ) +
+  
+  #Añadir la escala de tamaños
+  scale_size_continuous(
+    name = "Combustible (kg/m²)",
+    range = c(2, 6),
+    breaks = c(0.3, 5.5),  
+    labels = levels(parcelas_mapa$categoria), 
+    guide = guide_legend(
+      override.aes = list(
+        fill = azules, 
+        shape = 21,
+        alpha = 0.8
+      ),
+      order = 1
+    )
+  ) +
+  annotation_north_arrow(
+    location = "tr",
+    which_north = "true",
+    style = north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    ),
+    pad_x = unit(0.4, "cm"),
+    pad_y = unit(0.4, "cm")
+  ) +
+  annotation_scale(
+    location = "bl",
+    width_hint = 0.25,
+    bar_cols = c("black", "white"),
+    text_col = "black",
+    text_cex = 1,
+    line_width = 1
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste("SRC:", st_crs(teru)$input),
+    hjust = 1.1,
+    vjust = -0.55,
+    size = 4,
+    color = "black",
+    fontface = "italic"
+  ) +
+  labs(
+    title = "Combustible en parcelas con regenerado\ny matorral con potencial de crecimiento", 
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 28, hjust = 0.5, face = "bold", lineheight = 1.2),
+    legend.position = "bottom",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    legend.box = "vertical",
+    legend.spacing.y = unit(0.3, "cm"),
+    plot.caption = element_text(hjust = 0.5, size = 9, color = "gray40"),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 12),
+    axis.ticks = element_blank()
+  ) +
+  coord_sf(clip = "off")
+
+plot(mapa_principal)
+
+histograma <- ggplot(parcelas_mapa, aes(x = categoria)) +
+  geom_bar(aes(fill = cat_arb), color = "black", alpha = 0.8) +
+  scale_fill_manual(values = azules, guide = "none") +
+  labs(
+    title = "Distribución de\ncombustible por parcela",
+    x = "Combustible (kg/m²)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    axis.title.x = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.y = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+plot(histograma)
+
+mapa_final <- mapa_principal + 
+  inset_element(histograma, 
+                left = 0.7,   # Posición horizontal (0-1)
+                bottom = 0.08, # Posición vertical (0-1)
+                right = 1, 
+                top = 0.4)
+
+#Ver el resultado
+mapa_final
+
+summary(regmatarb$FccArb)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 25.00   52.50   60.00   59.21   70.00   90.00
+
+
+ggplot(regmatarb, aes(x = ModComb)) +
+  geom_histogram(
+    bins = 30,                  
+    fill = "#229954",          
+    color = "white",            
+    alpha = 0.8               
+  ) +
+  labs(
+    title = "Distribución del incremento anual de biomasa por parcela",
+    x = "Incremento (kg/m²·año)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#Sale el 5 y 6 con cinco parcelas, el 7 con cuatro y el 4 con tres
+
+
+############# ESTE ES EL MAPA DE ZONAS PRIORITARIAS MODELO 4 ################
+
+#Preparar el df con los datos
+biom_alta_cat <- biom_alta_cover %>%
+  mutate(
+    categoria2 = case_when(
+      biom_kgm2 >= 5 & biom_kgm2 < 6 ~ "5 - 6",
+      biom_kgm2 >= 6 & biom_kgm2 < 6 ~ "6 - 7",
+      biom_kgm2 >= 7 ~ "> 7",
+      TRUE ~ NA_character_  #Asignar NA a los valores fuera de esos rangos
+    )
+  ) %>%
+  filter(!is.na(categoria2)) %>%  #Mantener solo las categorias que se quieren
+  mutate(
+    # Convertir a factor con orden específico (sin incluir "0 - 5")
+    categoria2 = factor(
+      categoria2,
+      levels = c("5 - 6", "6 - 7", "> 7"),  # Nuevo orden sin "0 - 5"
+      ordered = TRUE
+    )
+  )
+
+#Convertir a factor y establecer el orden
+biom_modelo <- biom_modelo %>%
+  mutate(
+    categoria = factor(
+      categoria,
+      levels = c("0 - 5", "5 - 10", "> 10"),
+      ordered = TRUE
+    )
+  )
+
+#Ruta a los archivos
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+library(sf)
+
+#Ruta a la capa con las coordenadas de las parcelas
+shp <- "D:/TFMT/cartoTeru/coord_parcelas/"
+
+centros <- st_read(paste0(shp, "centrosMC.shp"))
+#Está en WGS84
+#centrosUTM <- st_transform(centros, crs = 25830)
+
+library(mapview)
+mapview(centros)
+
+#Ruta a la capa de la provincia de teruel
+rutaTeru <- "D:/TFMT/cartoTeru/provTeru/"
+teru <- st_read(paste0(rutaTeru, "ogr_1737345219701.shp"))
+
+library(ggspatial)
+
+############## ANALIZAR LOS DATOS PARA VER QUÉ SE REPRESENTA ############
+
+#Abrir el archivo con los datos a representar
+biom_modelo <- st_read(paste0(csvInv, "biomArb_modelo4.shp"),
+                       stringsAsFactors = FALSE)
+
+#Filtrar parcelas de las categorías que se quieren
+biom_alta <- biom_modelo %>% 
+     filter(categoria %in% c("5 - 10", "> 10"))
+#Salen 88 parcelas, que son muchas
+
+#Convertir a factor y establecer el orden pero con dos categorías
+biom_alta <- biom_alta%>%
+  mutate(
+    categoria = factor(
+      categoria,
+      levels = c("5 - 10", "> 10"),
+      ordered = TRUE
+    )
+  )
+
+#Ver los datos de Fccpx
+summary(biom_alta$Fccpx)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 57.30   72.97   79.69   79.17   85.40   98.93
+
+#Hacer un histograma con los datos de Fccpx
+ggplot(biom_alta, aes(x = Fccpx)) +
+  geom_histogram(
+    bins = 30,                  
+    fill = "#229954",           
+    color = "white",       
+    alpha = 0.8          
+  ) +
+  labs(
+    title = "Distribución de Fccpx",
+    x = "Fccpx (%)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()  
+#A partir de 70 es cuando hay más parcelas
+
+
+#Ver los datos de cover_m2
+summary(biom_alta$cover_m2)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 189.8   533.2   606.0   889.2  1440.1  1858.0
+
+#Hacer un histograma con los datos de cover_m2
+ggplot(biom_alta, aes(x = cover_m2)) +
+  geom_histogram(
+    bins = 30,                  
+    fill = "#229954",          
+    color = "white",           
+    alpha = 0.8          
+  ) +
+  labs(
+    title = "Distribución de cover_m2",
+    x = "cover_m2" (m²),
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#Se diferencia un grupo más numeroso con menos de 750 m² y otro con más de 1100 m²
+
+#Ver los datos de Hmpx
+summary(biom_alta$Hmpx)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 7.380   8.922  10.385  10.695  11.894  19.368
+
+#Hacer un histograma de Hmpx
+ggplot(biom_alta, aes(x = Hmpx)) +
+  geom_histogram(
+    bins = 30,                  
+    fill = "#229954",         
+    color = "white",           
+    alpha = 0.8               
+  ) +
+  labs(
+    title = "Distribución de Hmpx",
+    x = "Hmpx (m)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+#La mayoría tienen una altura media menor a 12,5 m
+
+
+#cover_m2 es la superficie con vegetación a la mitad de Hmpx
+#La mayoría de Hmpx está por debajo de 12,5 m
+#Entonces la mayoría de cover_m2 está por debajo de 6,35 m
+
+#Ver cuantas parcelas hay con Hpmx por debajo de 12,5 m
+biom_alta_Hmpxbaja <- biom_alta %>% 
+  filter(Hmpx < 10)   
+#Salen 76, que siguen siendo muchas
+
+#Revisar el histograma de cover_m2 para Hmpx < 12.5 m
+ggplot(biom_alta_Hmpxbaja, aes(x = cover_m2)) +
+  geom_histogram(
+    bins = 30,                  
+    fill = "#229954",        
+    color = "white",          
+    alpha = 0.8           
+  ) +
+  labs(
+    title = "Distribución de cover_m2 para Hmpx < 12.5 m",
+    x = "cover_m2 (m²)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+#Añadir la condición de una Fccpx > 70 %
+biom_alta_HmpxFccpx <- biom_alta_Hmpxbaja %>% 
+  filter(Fccpx > 70)
+
+
+ggplot(biom_alta_HmpxFccpx, aes(x = ModComb)) +
+  geom_histogram(
+    bins = 30,                 
+    fill = "#229954",        
+    color = "white",        
+    alpha = 0.8             
+  ) +
+  labs(
+    title = "Distribución de cover_m2 para Hmpx < 12.5 m y Fccpx > 70%",
+    x = "cover_m2 (m²)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal()
+
+
+#Hacer una paleta de colores
+verdes <- c(
+  #"0 - 5" = "#d4efdf",
+  "5 - 10" = "#7dcea0",
+  "> 10" = "#145a32"
+)
+
+
+#Hacer otra paleta de colores
+azules <- c(
+  "5 - 6" = "#85c1e9",
+  "6 - 7" = "#3498db",
+  "> 7" = "#2874a6"
+)
+
+#Preparar los datos
+biom_alta_cat <- biom_alta_HmpxFccpx %>%
+  mutate(
+    categoria2 = case_when(
+      biom_kgm2 >= 5 & biom_kgm2 < 6 ~ "5 - 6",
+      biom_kgm2 >= 6 & biom_kgm2 < 7 ~ "6 - 7",  
+      biom_kgm2 >= 7 ~ "> 7",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(categoria2)) %>%
+  mutate(
+    categoria2 = factor(
+      categoria2,
+      levels = c("5 - 6", "6 - 7", "> 7"),
+      ordered = TRUE
+    )
+  )
+
+
+#Convertirlos a factor y establecer el orden
+biom_alta_cat <- biom_alta_cat %>%
+  mutate(
+    categoria2 = factor(
+      categoria2,
+      levels = c("5 - 6", "6 - 7", "> 7"),
+      ordered = TRUE
+    )
+  )
+
+unique(biom_alta_cat$categoria2)
+table(biom_alta_cat$categoria2)
+
+
+library(patchwork)
+#Representar el mapa
+mapa_principal <- ggplot() +
+  #Poner la silueta de la provincia
+  geom_sf(data = teru, fill = NA, color = "#000000", linewidth = 0.5) +
+  geom_sf(
+    data = biom_alta_cat,
+    aes(fill = categoria2, size = biom_kgm2),
+    color = "black",
+    shape = 21,
+    stroke = 0.3,
+    alpha = 0.8
+  ) +
+  #Añadir escala de relleno
+  scale_fill_manual(
+    name = "Biomasa (kg/m²)",
+    values = azules,
+    drop = FALSE,
+    guide = "none" # Fuerza a mostrar todas las categorías
+  ) +
+  scale_size_continuous( #Leyenda con tamaño en función de tamaño
+    name = "Combustible (kg/m²)",
+    range = c(2, 8),
+    #breaks = c(0, 5, 10, 20, 50),  # Puntos de corte numéricos
+    breaks = c(5.1, 6, 8), #El valor mínimo del modelo es 0,507
+    #labels = c("0 - 5", "5 - 10", "10 - 20", "20 - 50", "> 50"),
+    labels = c("5 - 6", "6 - 7", "> 7"),
+    guide = guide_legend(
+      override.aes = list(
+        fill = azules  #Mostrar leyenda size con colores
+      )
+    )
+  ) +
+  annotation_north_arrow(
+    location = "tr",
+    which_north = "true",
+    style = north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    ),
+    pad_x = unit(0.4, "cm"),
+    pad_y = unit(0.4, "cm")
+  ) +
+  annotation_scale(
+    location = "bl",
+    width_hint = 0.25,
+    bar_cols = c("black", "white"),
+    text_col = "black",
+    text_cex = 1,
+    line_width = 1
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste("SRC:", st_crs(teru)$input),
+    hjust = 1.1,
+    vjust = -0.55,
+    size = 4,
+    color = "black",
+    fontface = "italic"
+  ) +
+  labs(
+    title = "Alta carga de combustible con\ncontinuidad horizontal y vertical",
+    subtitle = "INF4 y 3ª cobertura LiDAR"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 28, hjust = 0.5, face = "bold", lineheight = 1.2),
+    plot.subtitle = element_text(size = 20, hjust = 0.5, lineheight = 1.2),
+    legend.position = "bottom",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    legend.box = "vertical",
+    legend.spacing.y = unit(0.3, "cm"),
+    plot.caption = element_text(hjust = 0.5, size = 9, color = "gray40"),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 12),
+    axis.ticks = element_blank()
+  ) +
+  coord_sf(clip = "off")
+plot(mapa_principal)
+
+histograma <- ggplot(biom_alta_cat, aes(x = categoria2)) +
+  geom_bar(aes(fill = categoria2), color = "black", alpha = 0.8) + 
+  scale_fill_manual(values = azules, guide = "none") +  # Aplicar la paleta aquí
+  labs(
+    title = "Distribución de\ncombustible por parcela",
+    x = "Combustible (kg/m²)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    axis.title.x = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.y = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+plot(histograma)
+
+mapa_final <- mapa_principal + 
+  inset_element(histograma, 
+                left = 0.7,   
+                bottom = 0.08, 
+                right = 1, 
+                top = 0.4)
+
+#Ver el resultado
+mapa_final
+
+
