@@ -1,0 +1,608 @@
+#Este es el código para hacer el modelo 3: IFN3 vs. LiDAR 1ª cob
+
+
+
+
+library(openxlsx)
+
+#Ruta a los archivos
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+#Archivo con las métricas LiDAR de combustible
+met_biom <- read.csv2(paste0(csvInv, "met_biom1c.csv"))
+
+#Archivo con los datos de campo
+biom_parce <- read.csv2(paste0(csvInv, "biomArb_m2EstIFN3_act.csv"))
+
+library(tidyverse)
+
+#Revisar los datos
+sd(biom_parce$BiomArb)
+
+summary(biom_parce$BiomArb)
+
+summary(biom_parce$BiomArb3_m2)
+sd(biom_parce$BiomArb3_m2, na.rm = TRUE)  #Sale 4.69864
+
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.000   1.623   3.426   4.537   6.002  43.397
+
+
+
+############### ESTE ES EL MODELO 3 DE BIOMASA ################
+
+datos_campo <- biom_parce %>%
+  select(Estadillo, BiomArb) %>%
+  mutate(BiomTm = BiomArb / 1000) %>%
+  select(-BiomArb)
+
+#Unir con las metricas
+metcampo <- merge(datos_campo, met_biom, by = "Estadillo")
+
+
+colSums(is.na(metcampo))
+
+metcampo2 <- na.omit(metcampo) #Con esto se eliminan la filas con algún 0 que 
+#dan problemas después, se eliminan 3 filas con 0 en dfiA y vol_m3
+
+#Hay que quitar la 238 que tiene 0 en BiomArb, pero como antes se quitan 3
+#pues hay que quitar la que está en posición 235
+bdd <- metcampo2[-c(235), -8] ##Se quita esta fila porque su biomasa es = 0 y la columna de la superficie de parcela
+
+
+summary(bdd$BiomTm)
+
+
+library(janitor)
+#Especificar la variable dependiente y las independientes.
+vbles <- dplyr::select(bdd, "BiomTm", 3:length(names(bdd))) %>%
+  remove_constant()
+
+#Trasnformación logarítmica a TODAS las variables porque ya se ha visto que la
+#relación es logarítmica y así permite seleccionar variables con olsrr
+#Se añade 0.001 para que no salga todo NA por los valores que son = 0
+
+vbles_log <- log(vbles + 0.001) 
+
+cor(vbles_log)[,1]
+
+#Seleccionar variables con una correlación entre ellas < 0.8
+library(fuzzySim)
+vbles80 <- corSelect(
+  vbles_log, sp.cols = 1, var.cols = 2:35, cor.thresh = 0.8)
+
+df_vbles80 <- dplyr::select(vbles_log, "BiomTm", vbles80$selected.vars)
+
+modelo_1 <- lm(BiomTm ~., data = df_vbles80)
+
+#Ver el grado de significancia de cada variable en el modelo
+summary(modelo_1) #Multiple R-squared:  0.6997,	Adjusted R-squared:  0.6934
+
+library(car)
+vif(modelo_1) #En casi todas sale > 3
+
+library(performance)
+check_collinearity(modelo_1) #Baja para todas
+check_heteroscedasticity(modelo_1) #Sale heterocedástico (p = 0.001)
+
+plot(modelo_1, which = 1, col = c("blue"))
+#Aparecen dos parcelas cerca del -3 y otra cerca del +3
+
+#Reducción de variables por stepwise
+library(olsrr) 
+sr_lm <- ols_step_both_p(modelo_1, pent=0.05, prem=0.05)
+print(sr_lm)
+#Este análisis reduce el modelo a solo cinco variables con significancia
+
+modelo_2 <- lm(BiomTm ~ cover_m2 + ptos_sb8m + ptos_sb20m + ptos_sb2m + ptos_sb15m,
+               data = df_vbles80)
+
+summary(modelo_2) #Multiple R-squared:  0.6992,	Adjusted R-squared:  0.694
+
+check_heteroscedasticity(modelo_2) #Sale heterocedástico (p = 0.001)
+
+
+#Se prueba a quitar la variable menos significativa
+modelo_2b <- lm(BiomTm ~ cover_m2 + ptos_sb8m + ptos_sb20m + ptos_sb2m, 
+                data = df_vbles80)
+
+summary(modelo_2b) #Multiple R-squared:  0.6959,	Adjusted R-squared:  0.6917 
+
+check_heteroscedasticity(modelo_2b) #Sale heterocedástico (p = 0.002)
+
+AIC(modelo_2, modelo_2b) #Es 1 puntos más bajo AIC de modelo_2, ambos salen > 600
+anova(modelo_2, modelo_2b) #Los dos modelos son iguales
+#     Res.Df    RSS Df Sum of Sq      F Pr(>F)  
+# 1    288 169.89                             
+# 2    289 171.75 -1   -1.8631 3.1583 0.0766
+#Hipótesis nula (H0): los dos modelos son iguales si p > 0.05
+#Hipótesis alternativa (H1): el modelo con RSS más bajo es mejor si p < 0.05
+
+#Los dos modelos salen iguales porque p = 0.0766
+#Se sigue con modelo_2b que tiene una variable menos
+
+
+
+#Otras comprobaciones de normalidad de los residuos del modelo_2
+check_normality(modelo_2b)  #Los residuos NO tienen distribución normal (p = 0.016)
+
+shapiro.test(residuals(modelo_2b)) #Los residuos NO tienen distribución normal
+#W = 0.98843, p-value = 0.01907
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#W tiene que salir próximo a 1 
+
+
+plot(modelo_2b, which = 2, col = c("blue")) #QQ
+#Los residuos se desvían de la línea en los extremos, más en los valores altos
+
+
+ks.test(residuals(modelo_2b), "pnorm") #Los residuos NO tienen distribución normal
+#D = 0.084883, p-value = 0.02891
+#La máxima desviación (D) tiene un valor pequeño
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+
+library(nortest)
+ad.test(residuals(modelo_2b))  #Los residuos NO tienen distribución normal
+#A = 0.90191, p-value = 0.02121
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#El valor de A cerca de 1 indica una distribución NO normal
+
+
+hist(modelo_2b$residuals) 
+#La cola de la izquierda tiene más peso.
+
+check_outliers(modelo_2b, method = "cook") 
+#No hay outliers con el método de Cook (0.9)
+
+plot(modelo_2b, which = 5, col = c("blue")) 
+#Hay dos parcelas en los límites del +-2 y una cerca del -4, pero no superan
+#la distancia de Cook para consierarlas outliers
+
+library(car)
+outlierTest(modelo_2b) 
+#Mirar los outliers con el test de Buonferroni
+# rstudent unadjusted p-value Bonferroni p
+# 251 -3.907884         0.00011612     0.034138
+# 285  3.836107         0.00015362     0.045164
+#La parcela de la línea 285 tiene una t-student muy alta, el umbral está en +-2,
+#Según Buonferroni son outlier
+#Hipótesis nula (H0): la parcela no es outlier si p > 0.05
+#Hipótesis alternativa (H1): la parcela es outlier si p < 0.05
+#Si Buonferroni da NA es que es > 1
+
+
+#Eliminar las filas del df con índice 251 y 285, como antes se eliminaron 4 parcelas
+#con índices más bajos pues hay que eliminar la fila en posición 247 y 281. 
+
+df_vbles80b <- df_vbles80[-c(247, 281), ]
+
+
+
+modelo_2b <- lm(BiomTm ~ cover_m2 + ptos_sb8m + ptos_sb20m + ptos_sb2m, 
+                data = df_vbles80b)
+summary(modelo_2b) #Multiple R-squared:  0.7131,	Adjusted R-squared:  0.7091 
+
+check_heteroscedasticity(modelo_2b) #Sale heterocedástico (p < 0.001)
+
+#Tras eliminar un outlier se prueba a eliminar la variable menos significativa
+#del modelo resultante
+
+modelo_2c <- lm(BiomTm ~ cover_m2 + ptos_sb8m + ptos_sb20m, 
+                data = df_vbles80b)
+summary(modelo_2c) #Multiple R-squared:  0.7074,	Adjusted R-squared:  0.7044 
+
+check_heteroscedasticity(modelo_2c) #Sale heterocedástico (p < 0.001)
+
+
+AIC(modelo_2b, modelo_2c) #Es 4 puntos más bajo AIC de modelo_2b, ambos salen > 600
+anova(modelo_2b, modelo_2c) #Los modelos son diferentes
+#     Res.Df    RSS Df Sum of Sq      F Pr(>F)  
+# 1    287 155.05                             
+# 2    88 158.14 -1   -3.0895 5.7186 0.01743
+#Hipótesis nula (H0): los dos modelos son iguales si p > 0.05
+#Hipótesis alternativa (H1): el modelo con RSS más bajo es mejor si p < 0.05
+
+#Los dos modelos salen diferentes porque p = 0.0174
+
+#Se sigue con modelo_2b al que se le han quitado dos outliers
+
+
+#Otras comprobaciones de normalidad de los residuos del modelo_2b
+check_normality(modelo_2b)  #Los residuos tienen distribución normal
+
+shapiro.test(residuals(modelo_2b)) #Los residuos tienen distribución normal
+#W = 0.99155, p-value = 0.09315
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#W tiene que salir próximo a 1 
+
+
+plot(modelo_2b, which = 2, col = c("blue")) #QQ
+#Los residuos se desvían de la línea en los extremos, solo una parcela en el lado superior
+
+
+ks.test(residuals(modelo_2b), "pnorm") #Los residuos NO tienen distribución normal
+#D = 0.087604, p-value = 0.02263
+#La máxima desviación (D) tiene un valor pequeño
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+
+library(nortest)
+ad.test(residuals(modelo_2b))  #Los residuos NO tienen distribución normal
+#A = 0.79528, p-value = 0.03891
+#Hipótesis nula (H0): los residuos son normales si p > 0.05
+#Hipótesis alternativa (H1): los residuos no son normales si p < 0.05
+#El valor de A cerca de 1 indica una distribución NO normal
+
+
+hist(modelo_2b$residuals) 
+#La cola de la izquierda es más pesada.
+
+check_outliers(modelo_2b, method = "cook") 
+#No hay outliers con el método de Cook (0.9)
+
+plot(modelo_2b, which = 5, col = c("blue"))  
+#Hay dos parcelas en los límites del +-2 y una cerca del 3, pero no superan
+#la distancia de Cook para consierarlas outliers
+
+library(car)
+outlierTest(modelo_2b) 
+#Mirar los outliers con el test de Buonferroni
+# rstudent unadjusted p-value Bonferroni p
+# 109 -3.139021          0.0018724      0.54673
+#La parcela de la línea 109 tiene una t-student muy alta, el umbral está en +-2,
+#Según Buonferroni NO es outlier
+#Hipótesis nula (H0): la parcela no es outlier si p > 0.05
+#Hipótesis alternativa (H1): la parcela es outlier si p < 0.05
+#Si Buonferroni da NA es que es > 1
+
+#Eliminar outliers no ha solucionado el problema de la heterocedasticidad, 
+#tampoco se ha estado cerca p < 0,001
+
+
+################ GRÁFICO COMPARATIVO DE LOS RESIDUOS ##############
+
+#Se compara el histograma de los residuos y su tendencia con una línea normal teórica
+
+#Esto hay que hacerlo para el modelo_2b con datos df_vbles80b y para su correspondiente modelo cuantílico, el modelo_2q
+
+library(patchwork)  
+#Hacer el histograma de los residuos
+hist_residuos <- ggplot(data.frame(residuos = modelo_2q$residuals), aes(x = residuos)) +
+  geom_histogram(aes(y = ..density..), bins = 20, fill = "white", color = "black", alpha = 1) +
+  geom_density(
+    aes(color = "Modelo"),
+    linewidth = 0.5
+  ) +
+  stat_function(
+    aes(color = "Teórica"),
+    fun = dnorm,
+    args = list(
+      mean = mean(residuals(modelo_2q)),
+      sd = sd(residuals(modelo_2q))
+    ),
+    linewidth = 0.5
+  ) +
+  scale_color_manual(
+    name = NULL,  #Quitar título de la leyenda
+    values = c(
+      "Modelo" = "blue",  #Línea de tendencia
+      "Teórica" = "red"  #Línea teórica
+    )
+  ) +
+  labs(title = "Histograma de residuos\ndel modelo 3 cuantílico", x = "Residuos", y = "Densidad") +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
+    axis.text = element_text(size = 24),
+    axis.title = element_text(size = 24),
+    legend.position = c(0.95, 0.95),  
+    legend.justification = c(1, 1),
+    legend.text = element_text(size = 24, hjust = 0.5)
+  )
+
+#Hacer el gráfico QQ = plot(modelo_2, which = 2)
+qq_data <- data.frame(residuos = residuals(modelo_2q, type = "pearson"))  #Residuos estandarizados
+qq_plot <- ggplot(qq_data, aes(sample = residuos)) +
+  stat_qq(shape = 21, fill = "white", color = "black", stroke = 0.5, size = 2) +
+  stat_qq_line(color = "red", linewidth = 0.5) +
+  labs(title = "QQ-plot de residuos\ndel modelo 3 cuantílico", x = "Cuantiles teóricos", y = "Cuantiles observados") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
+    axis.text = element_text(size = 24),
+    axis.title = element_text(size = 24)
+  )
+
+#Combinar los gráficos
+hist_residuos + qq_plot
+
+#La línea roja teórica queda dentro de los límites del histograma.
+#La desviación de los residuos de la línea QQ es más grande en el lado inferior
+
+#Se hace un modelo de  regresión cuantílica 50% para suavizar el efecto de la
+#falta de homocedasticidad.
+
+
+
+############## MODELO REGRESIÓN CUANTÍLICA #######################
+
+library(quantreg)
+
+modelo_2q <- rq(BiomTm ~ cover_m2 + ptos_sb8m + ptos_sb20m + ptos_sb2m,
+                data = df_vbles80b, tau = 0.5)
+
+summary(modelo_2q)
+#Todas las variables son significativas porque ningún intervalo contiene el valor 0
+
+#Sacar estadísticos del modelo_2q para poder comparar con otros
+modelo_2q$rho
+#Sale 82.70025
+
+rho_norm <- modelo_2q$rho / median(df_vbles80b$BiomTm)
+print(rho_norm) #Sale 69.3474
+
+summary(df_vbles80b$BiomTm)
+
+rho <- function(u, tau) u * (tau - (u < 0))
+V1 <- sum(rho(residuals(modelo_2q), tau = 0.5))
+V0 <- sum(rho(df_vbles80b$BiomTm - quantile(df_vbles80b$BiomTm, 0.5), tau = 0.5))
+pseudo_R2 <- 1 - V1 / V0
+
+pseudo_R2 #Sale 0.4607007
+
+
+#Estadísticos del modelo revirtiendo la transformación logarítmica
+pred_q  <- predict(modelo_2q,  newdata = df_vbles80b)
+
+#Revertir la transformación logarítmica
+pred_q_orig  <- exp(pred_q)  - 0.001
+obs_orig     <- exp(df_vbles80b$BiomTm) - 0.001  #Medidos
+
+#MAE, MedAE y RMSE para modelo_2q
+mae_q   <- mean(abs(pred_q_orig - obs_orig)) 
+medae_q = median(abs(pred_q_orig - obs_orig))
+rmse_q  <- sqrt(mean((pred_q_orig - obs_orig)^2))
+
+#ver el resultado
+cat("Modelo_2q\n")
+#pseudo_R2 #Sale 0.4607007
+cat(" MAE:  ", round(mae_q,  3), "\n")   #Sale MAE:   2.228
+cat(" MedAE:  ", round(medae_q,  3), "\n")   #Sale MedAE:   1.114 
+cat(" RMSE: ", round(rmse_q, 3), "\n\n") #Sale RMSE:  5.461
+
+######## VOLVER A ARRIBA Y SACAR EL HISTOGRAMA Y EL GRAFICO QQ ##################
+
+
+
+######## ESTO ES PARA HACER EL GRÁFICO DE CADA VARIABLE ################
+#Variables predictoras
+# vars <- c("cover_m2", "ptos_sb8m", "ptos_sb20m", "ptos_sb2m")
+#
+# #Convertir a formato largo para representarlo junto a otros gráficos
+# df_long <- df_vbles80 %>%
+#   select(BiomTm, all_of(vars)) %>%
+#   pivot_longer(
+#     cols = all_of(vars),
+#     names_to = "variable",
+#     values_to = "valor"
+#   )
+# 
+# #Gráfico con facetas
+# ggplot(df_long, aes(x = valor, y = BiomTm)) +
+#   geom_point() +
+#   geom_quantile(quantiles = 0.5, color = "blue") +
+#   facet_wrap(~ variable, scales = "free_x") +
+#   labs(
+#     title = "Relación entre variables explicativas y la mediana de BiomTm",
+#     x = "Valor predictor",
+#     y = "Mediana de la biomasa por parcela (Tm)"
+#   ) +
+#   theme_minimal()
+
+
+
+
+
+############# HACER LA VALIDACIÓN CRUZADA ######################
+library(caret)
+set.seed(230)
+folds <- caret::createFolds(df_vbles80b$BiomTm, k = 10)
+
+#Sacar el resto de estadísticos revirtiendo la transformación logaritmica
+results <- lapply(seq_along(folds), function(i) {
+  #Datos de entrenamiento
+  test_indices <- folds[[i]]
+  train_data <- df_vbles80b[-test_indices, ]
+  test_data <- df_vbles80b[test_indices, ]
+  
+  #Indicar el modelo 
+  model <- rq(BiomTm ~ cover_m2 + ptos_sb8m + ptos_sb20m + ptos_sb2m, 
+              data = train_data, tau = 0.5)
+  
+  #Predicciones
+  pred <- predict(model, test_data)
+  
+  #Residuos y métricas
+  residuos <- test_data$BiomTm - pred
+  
+  # Pseudo-R² (Koenker & Machado)
+  rho <- function(u, tau) u * (tau - (u < 0))
+  V1 <- sum(rho(residuals(model), tau = 0.5))
+  V0 <- sum(rho(train_data$BiomTm - median(train_data$BiomTm), tau = 0.5))
+  pseudo_r2 <- 1 - V1 / V0
+  
+  #Ver resultados en un df
+  data.frame(
+    Fold = i,
+    RMSE = exp(sqrt(mean(residuos^2))) - 0.001,
+    MAE = exp(mean(abs(residuos))) - 0.001,
+    MedAE = exp(median(abs(residuos))) - 0.001,
+    rho = V1,
+    PseudoR2 = pseudo_r2
+  )
+})
+
+#Combinar resultados en un solo df
+results_df <- do.call(rbind, results)
+
+summary_metrics <- results_df %>%
+  summarise(
+    RMSE_mean = mean(RMSE),
+    RMSE_sd = sd(RMSE),     
+    MAE_mean = mean(MAE),
+    MAE_sd = sd(MAE),     
+    MedAE_mean = mean(MedAE),
+    MedAE_sd = sd(MedAE),   
+    rho_mean = mean(rho),
+    rho_sd = sd(rho),
+    PseudoR2_mean = mean(PseudoR2),
+    PseudoR2_sd = sd(PseudoR2) 
+  )
+
+print(summary_metrics)
+
+
+#modelo_2q ya en escala original
+# RMSE_mean   RMSE_sd MAE_mean   MAE_sd MedAE_mean  MedAE_sd rho_mean   rho_sd
+# 1  2.121423 0.2324882 1.802618 0.160485   1.629562 0.2268701 74.28436 1.258315
+# PseudoR2_mean PseudoR2_sd
+# 1     0.4616902   0.0102786
+# 
+
+########### REPRESENTAR EL MODELO ###################
+
+df_vbles80b$BiomTm_est <- (exp(predict(modelo_2q, data = df_vbles80b)) - 0.001)
+#BiomTm_est está ya en escala original y en Tm
+#Esto es lo que hay que representar
+
+summary(modelo_2q, se = "boot") #Hacerlo sin boot para que salga lowe bb y upper bd
+
+#Calcular el valor del intercepto de la ecuación
+print(exp(-2.93622)) #0.05306594
+
+#Coefficients:
+#             coefficients lower bd upper bd
+# (Intercept) -2.93622     -4.11765 -1.77282
+# cover_m2     0.80311      0.65116  1.04724
+# ptos_sb8m    0.09823      0.07811  0.12816
+# ptos_sb20m   0.10039      0.06252  0.11334
+# ptos_sb2m   -0.10949     -0.22528 -0.00875
+
+# Coefficients:
+#   Value    Std. Error t value  Pr(>|t|)
+# (Intercept) -2.93622  0.70718   -4.15199  0.00004
+# cover_m2     0.80311  0.12265    6.54797  0.00000
+# ptos_sb8m    0.09823  0.01616    6.07794  0.00000
+# ptos_sb20m   0.10039  0.02942    3.41191  0.00074
+# ptos_sb2m   -0.10949  0.06914   -1.58357  0.11439
+
+
+library(ggplot2)
+
+ggplot(df_vbles80b, aes(x = exp(BiomTm), y = BiomTm_est)) + 
+  geom_point(alpha = 1) +
+  stat_smooth(method = "lm", formula = y ~ x, color = "blue") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "solid") +
+  #coord_cartesian(xlim = c(0, 20), ylim = c(0, 20)) + 
+  theme_bw() +
+  labs(
+    title = "Ajuste lineal del modelo 3 de carga de combustible", 
+    x = "Calculada de IFN3 por parcela (Tm)", 
+    y = "Estimada LiDAR 1ª cob. por parcela (Tm)"  # Eliminado el caption aquí
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"),
+    axis.text = element_text(size = 24),
+    axis.title = element_text(size = 24)
+  )
+
+
+############ ESTO ES PARA HACER LUEGO LOS BOX-PLOT #########################
+
+
+vari <- df_vbles80b
+
+pred_log <- predict(modelo_2q, newdata = vari)
+summary_rq <- summary(modelo_2q, se = "boot", R = 500, covariance = TRUE)
+
+covB <- summary_rq$cov
+
+X <- model.matrix(modelo_2q, data = vari)
+
+se_log <- sqrt(rowSums((X %*% covB) * X))
+
+vari$BiomTm_pred <- exp(pred_log) - 0.001
+
+vari$BiomTm_pred_se <- vari$BiomTm_pred * se_log
+
+vari$BiomTm_pred_lwr <- exp(pred_log - 1.96 * se_log) - 0.001
+vari$BiomTm_pred_upr <- exp(pred_log + 1.96 * se_log) - 0.001
+
+vari$BiomTm_pred <- round(vari$BiomTm_pred, 3)
+vari$BiomTm_pred_se <- round(vari$BiomTm_pred_se, 3)
+vari$BiomTm_pred_lwr <- round(vari$BiomTm_pred_lwr, 3)
+vari$BiomTm_pred_upr <- round(vari$BiomTm_pred_upr, 3)
+
+
+head(vari[, c("BiomTm_pred", "BiomTm_pred_se", "BiomTm_pred_lwr", "BiomTm_pred_upr")])
+
+
+#Asegurar el mismo orden y filas
+bdd_sub <- bdd[rownames(vari), ]
+
+df_vbles80e <- cbind(
+  Estadillo = bdd_sub$Estadillo,
+  vari
+)
+
+
+mod3 <- df_vbles80e %>%
+  select(Estadillo, BiomTm_pred, BiomTm_pred_se, BiomTm_pred_lwr, BiomTm_pred_upr)
+
+
+
+sup_mod3 <- met_biom %>%
+  select(Estadillo, superf)
+
+mod3 <- mod3 %>%
+  left_join(sup_mod3, by = "Estadillo")
+
+
+vari <- df_vbles80b
+
+#Calcular predicciones y errores sd en escala logarítmica
+pred_log <- predict(modelo_2b, data = vari, se.fit = TRUE)
+
+#Revertir la escala logarítmica
+vari$BiomTm_mod1 <- exp(pred_log$fit) - 0.001  # Ajuste de -0.001 si es necesario
+
+#Ajustar errores sd a escala original con método delta)
+#Aplicar esta fórmula: se_original ≈ exp(fit_log) * se_log
+vari$BiomTm_mod1_se <- exp(pred_log$fit) * pred_log$se.fit
+
+#Calcular los intervalos de confianza al 95%
+vari$BiomTm_mod1_lwr <- vari$BiomTm_mod1- 1.96 * vari$BiomTm_mod1_se
+vari$BiomTm_mod1_upr <- vari$BiomTm_mod1 + 1.96 * vari$BiomTm_mod1_se
+
+#Hacer un df con la variable estadillo para tener los números de parcela
+df_vbles80e <- data.frame(
+  Estadillo = bdd$Estadillo,
+  vari)
+
+#Unir los resultados en un df
+mod1 <- df_vbles80e %>%
+  select(Estadillo, BiomTm_mod1, BiomTm_mod1_se,BiomTm_mod1_lwr, BiomTm_mod1_upr)
+
+
+#Unir los resultados a los del otro modelo hecho con LiDAR 2ª cobertura
+tendBiom <- mod1 %>%
+  left_join(mod3, by = "Estadillo") %>%
+  left_join(mod2, by = "Estadillo")
+
+write_excel_csv2(tendBiom, paste0(csvInv, "pred_tendencia.csv"))
+
+
