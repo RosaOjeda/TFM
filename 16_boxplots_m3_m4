@@ -1,0 +1,123 @@
+
+#Este código sirve para hacer los box-plot del texto
+
+library(openxlsx)
+library(tidyverse)
+
+#Ruta a los archivos
+csvInv <- "D:/TFMT/IFN4_Teruel/datosInv/"
+
+#Abrir el archivo que se ha preparado tras los modelos
+pred <- read.csv2(paste0(csvInv, "pred_tendenciaOK.csv"),
+                  stringsAsFactors = FALSE)
+
+#Abrir la biomasa estimada en IFN3 con ecuaciones
+biomArb3_Est <- read.csv2(paste0(csvInv, "biomArb_m2EstIFN3_act.csv"))
+
+#Abrir la biomasa estimada en IFN4 con ecuaciones
+biomArb4_Est <- read.csv2(paste0(csvInv, "biomArb_m2Est_act.csv"))
+
+
+#Seleccionar columnas necesarias en IFN3
+biomifn3 <- biomArb3_Est %>%
+  rename(sup3 = superf) %>%
+  select(Estadillo, sup3)
+
+biomcampo <- biomifn3 %>%
+  full_join(biomifn4, by = "Estadillo") %>%
+  select(Estadillo, sup3, sup4)
+
+
+pred3 <- pred[ , c(1:5)]
+
+
+pred3 <- pred3 %>%
+  left_join(biomcampo %>%
+              select(Estadillo, sup3), by = "Estadillo")
+
+ifn3m2 <- pred3 %>%
+  mutate(across(-c(Estadillo, sup3), ~ . * 1000 / sup3, .names = "{.col}_kg_m2")) %>%
+  select(Estadillo, ends_with("_kg_m2"))
+
+
+#Seleccionar columnas necesarias en IFN4
+biomifn4 <- biomArb4_Est %>%
+  rename(sup4 = superf) %>%
+  select(Estadillo, sup4)
+
+pred4 <- pred[ , c(1, 6:9)]
+
+#pred4 <- pred[ , c(1, 6:9, 14:17)]
+
+
+pred4 <- pred4 %>%
+  left_join(biomcampo %>%
+              select(Estadillo, sup4), by = "Estadillo")
+
+ifn4m2 <- pred4 %>%
+  mutate(across(-c(Estadillo, sup4), ~ . * 1000 / sup4, .names = "{.col}_kg_m2")) %>%
+  select(Estadillo, ends_with("_kg_m2"))
+
+#Unir los resultados en un solo df
+pred_kgm2 <- ifn3m2 %>%
+  full_join(ifn4m2, by = "Estadillo")
+
+head(pred_kgm2)
+
+#Esto es lo que hay que poner en la tabla antes de los boxplot
+tend1 <- pred_kgm2 %>%
+  select(Estadillo, BiomTm_pred_kg_m2, BiomTm_pred4_kg_m2)
+
+summary(tend1$BiomTm_pred_kg_m2)
+sd(tend1$BiomTm_pred_kg_m2, na.rm = TRUE)  #Sale 2.117603
+#Esto es del modelo 3
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.4216  2.2945  3.6589  3.7993  4.7972 14.0336
+
+
+summary(tend1$BiomTm_pred4_kg_m2)
+sd(tend1$BiomTm_pred4_kg_m2, na.rm = TRUE)  #Sale 2.090449
+#Esto es del modelo 4
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+#  0.5067  2.3385  3.8905  3.9292  5.4344 10.7164       1
+
+
+########### ESTOS SON LOS BOX-PLOT ################
+
+tend_largo1 <- tend1 %>%
+  pivot_longer(cols = -Estadillo, names_to = "Modelo", values_to = "Carga") %>%
+  mutate(
+    Inventario = case_when(
+      Modelo %in% c("BiomTm_pred_kg_m2") ~ "IFN3",
+      Modelo %in% c("BiomTm_pred4_kg_m2") ~ "IFN4"
+    ),
+    Modelo = factor(
+      Modelo,
+      levels = c("BiomTm_pred_kg_m2", "BiomTm_pred4_kg_m2"),
+      labels = c("Modelo 3", "Modelo 4")
+    )
+  )
+
+ggplot(tend_largo1, aes(x = Modelo, y = Carga, fill = Inventario)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(
+    title = "Dispersión de la carga de combustible estimada",
+    y = "Carga de combustible (kg/m²)",
+    fill = "Inventario:" 
+  ) +
+  scale_fill_manual(
+    values = c("IFN3" = "#3498db", "IFN4" = "#f39c12"),
+    labels = c("IFN3", "IFN4") 
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"), 
+    axis.text = element_text(hjust = 0.5, size = 24),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    axis.title.x = element_blank(),
+    legend.position = "top",
+    legend.text = element_text(size = 24),
+    legend.title = element_text(size = 24, face = "bold")
+  )
+
+
