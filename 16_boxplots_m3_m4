@@ -120,4 +120,30 @@ ggplot(tend_largo1, aes(x = Modelo, y = Carga, fill = Inventario)) +
     legend.title = element_text(size = 24, face = "bold")
   )
 
+############ DIAGRAMA DE VIOLINES PARA PRESENTACIÓN ###############
+ggplot(tend_largo1, aes(x = Modelo, y = Carga, fill = Inventario)) +
+  geom_violin(trim = FALSE, alpha = 1) +
+  geom_boxplot(width = 0.3, fill = "white", outlier.shape = NA) +
+  theme_minimal() +
+  labs(
+    title = "Distribución de la carga de combustible estimada",
+    y = "Carga de combustible (kg/m²)",
+    fill = "Inventario:"  # Título de la leyenda
+  ) +
+  scale_fill_manual(
+    values = c("IFN3" = "#3498db", "IFN4" = "#f39c12"),  # Colores asignados
+    labels = c("IFN3", "IFN4")  # Etiquetas de la leyenda
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 28, face = "bold"), 
+    axis.text = element_text(hjust = 0.5, size = 24),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    axis.title.x = element_blank(),
+    legend.position = "top",
+    legend.text = element_text(size = 24),
+    legend.title = element_text(size = 24, face = "bold")
+  )
+
+
+
 
